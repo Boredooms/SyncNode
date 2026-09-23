@@ -103,6 +103,12 @@ jobs:
         run: npm run build
         env: { NODE_ENV: production }
 
+      - name: Generate app icon
+        shell: pwsh
+        run: |
+          pip install pillow --quiet
+          python scripts/make_icon.py
+
       - name: Download backend bundle
         uses: actions/download-artifact@v4
         with:
