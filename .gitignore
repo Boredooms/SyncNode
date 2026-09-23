@@ -1,0 +1,96 @@
+# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+.installed.cfg
+.eggs/
+
+# ─── Virtual environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+.conda/
+
+# ─── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# ─── Environment — NEVER commit secrets ───────────────────────────────────────
+.env
+.env.local
+.env.*.local
+# .env.example is committed intentionally (no secrets, just structure)
+
+# ─── Database & runtime data (user-specific, generated on first run) ──────────
+data/
+*.db
+*.sqlite
+*.sqlite3
+backend.db
+
+# ─── Workspace artifacts (run outputs, screenshots — large binary files) ───────
+workspace/
+runs/
+
+# ─── Python build artifacts ────────────────────────────────────────────────────
+build/
+dist/
+*.pyc
+*.pyo
+
+# ─── Node / Electron ──────────────────────────────────────────────────────────
+node_modules/
+frontend/electron/out/
+frontend/electron/dist/
+frontend/electron/.vite/
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ─── Test artifacts ────────────────────────────────────────────────────────────
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+playwright-report/
+test-results/
+.test_run_id.txt
+
+# ─── ChromaDB (rebuilt from knowledge/ on startup) ────────────────────────────
+data/rag_index/
+
+# ─── OS ────────────────────────────────────────────────────────────────────────
+Thumbs.db
+.DS_Store
+desktop.ini
+ehthumbs.db
+
+# ─── Kiro / internal tooling ──────────────────────────────────────────────────
+.graphify/
+.kilocode/
+
+# ─── Large media (mesh gradient videos — too big for git) ─────────────────────
+*.mp4
+*.mov
+*.avi
+Untitled blend*.png
+
+# ─── PyInstaller ──────────────────────────────────────────────────────────────
+*.spec
+build/backend/
+
+# ─── Misc ─────────────────────────────────────────────────────────────────────
+*.bak
+*.tmp
+*.temp
+~$*

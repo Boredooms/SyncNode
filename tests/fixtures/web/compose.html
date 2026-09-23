@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gmail</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --gmail-red: #EA4335;
+      --gmail-blue: #1a73e8;
+      --gmail-blue-dark: #1557b0;
+      --gmail-bg: #f6f8fc;
+      --sidebar-w: 256px;
+      --font: 'Google Sans', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    }
+
+    html, body {
+      height: 100%; background: var(--gmail-bg);
+      font-family: var(--font); color: #202124; overflow: hidden;
+    }
+
+    /* ── App shell ───────────────────────── */
+    .app { display: flex; flex-direction: column; height: 100vh; }
+
+    /* ── Top bar ──────────────────────────── */
+    .topbar {
+      height: 64px; background: var(--gmail-bg);
+      display: flex; align-items: center; padding: 0 16px; gap: 12px;
+      border-bottom: 1px solid #e0e0e0; flex-shrink: 0; z-index: 10;
+    }
+    .logo { display: flex; align-items: center; gap: 6px; text-decoration: none; }
+    .logo-icon { width: 36px; height: 24px; }
+    .logo-text { font-size: 22px; color: #5f6368; font-weight: 400; letter-spacing: -0.5px; }
+    .search-bar {
+      flex: 1; max-width: 720px; height: 46px; background: #eaf1fb;
+      border-radius: 24px; display: flex; align-items: center;
+      padding: 0 16px; gap: 10px; color: #5f6368; font-size: 16px;
+      transition: background .15s, box-shadow .15s;
+    }
+    .search-bar:hover { background: #e2eaf8; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+    .search-icon { color: #5f6368; flex-shrink: 0; }
+    .search-input {
+      flex: 1; background: transparent; border: none; outline: none;
+      font-size: 16px; font-family: var(--font); color: #202124;
+    }
+    .search-input::placeholder { color: #9aa0a6; }
+    .avatar {
+      width: 32px; height: 32px; border-radius: 50%; background: #1a73e8;
+      color: #fff; display: flex; align-items: center; justify-content: center;
+      font-size: 14px; font-weight: 500; flex-shrink: 0; cursor: pointer;
+      margin-left: auto;
+    }
+
+    /* ── Body layout ─────────────────────── */
+    .body { display: flex; flex: 1; overflow: hidden; }
+
+    /* ── Sidebar ──────────────────────────── */
+    .sidebar {
+      width: var(--sidebar-w); flex-shrink: 0;
+      padding: 8px 0; overflow-y: auto;
+    }
+    .compose-btn {
+      display: flex; align-items: center; gap: 12px;
+      margin: 8px 16px 16px; padding: 18px 24px; border-radius: 16px;
+      background: #c2e7ff; color: #001d35; font-size: 14px; font-weight: 500;
+      cursor: default; border: none; width: calc(100% - 32px);
+      box-shadow: 0 1px 3px rgba(60,64,67,.3); transition: box-shadow .2s;
+    }
+    .compose-btn:hover { box-shadow: 0 2px 8px rgba(60,64,67,.35); }
+    .compose-icon { width: 24px; height: 24px; flex-shrink: 0; }
+    .nav-item {
+      display: flex; align-items: center; gap: 16px;
+      padding: 6px 16px 6px 24px; border-radius: 0 24px 24px 0;
+      cursor: default; font-size: 14px; color: #202124;
+      -webkit-user-select: none; user-select: none;
+      margin-right: 16px; font-weight: 400;
+    }
+    .nav-item.active { background: #d3e3fd; font-weight: 600; }
+    .nav-item:hover:not(.active) { background: rgba(0,0,0,.04); }
+    .nav-count { margin-left: auto; font-size: 12px; color: #202124; }
+
+    /* ── Inbox pane (faint, decorative) ────── */
+    .inbox { flex: 1; overflow: hidden; position: relative; }
+
+    /* ── Compose window ──────────────────── */
+    .compose-window {
+      position: fixed; right: 20px; bottom: 0;
+      width: 556px; border-radius: 12px 12px 0 0;
+      background: #fff; box-shadow: 0 8px 40px rgba(0,0,0,.28);
+      display: flex; flex-direction: column; overflow: hidden;
+      font-size: 14px; z-index: 999;
+    }
+
+    /* ── Compose header ──────────────────── */
+    .compose-header {
+      background: #404040; color: #fff;
+      padding: 8px 12px; display: flex; align-items: center;
+      cursor: default; border-radius: 12px 12px 0 0; flex-shrink: 0;
+    }
+    .compose-title { font-size: 14px; font-weight: 500; flex: 1; -webkit-user-select: none; user-select: none; }
+    .header-actions { display: flex; gap: 4px; }
+    .hbtn {
+      width: 28px; height: 28px; border-radius: 50%; border: none; background: transparent;
+      color: rgba(255,255,255,.8); cursor: pointer; display: flex;
+      align-items: center; justify-content: center; font-size: 18px;
+      transition: background .15s;
+    }
+    .hbtn:hover { background: rgba(255,255,255,.12); }
+
+    /* ── Fields ──────────────────────────── */
+    .compose-fields { padding: 0 16px; flex-shrink: 0; }
+    .field-row {
+      display: flex; align-items: center; border-bottom: 1px solid #e0e0e0;
+      padding: 8px 0; gap: 4px; min-height: 40px;
+    }
+    .field-row:last-of-type { border-bottom: 1px solid #e0e0e0; }
+    .field-label {
+      font-size: 14px; color: #444746; width: 52px; flex-shrink: 0; font-weight: 400;
+    }
+    .field-chip-area {
+      flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+    }
+    .recipient-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: #e8f0fe; color: #174ea6; border-radius: 16px;
+      padding: 3px 8px; font-size: 13px; max-width: 300px;
+    }
+    .recipient-chip .chip-avatar {
+      width: 20px; height: 20px; border-radius: 50%; background: #1a73e8;
+      color: #fff; font-size: 10px; display: flex; align-items: center;
+      justify-content: center; flex-shrink: 0;
+    }
+    .field-input, .subject-input {
+      flex: 1; border: none; outline: none; font-size: 14px;
+      font-family: var(--font); color: #202124; background: transparent;
+      padding: 0; min-width: 60px;
+    }
+    .field-input::placeholder, .subject-input::placeholder { color: #9aa0a6; }
+    .subject-row { font-weight: 400; }
+    .subject-input { font-size: 15px; }
+
+    /* ── Body textarea ────────────────────── */
+    .compose-body {
+      flex: 1; padding: 12px 16px; overflow-y: auto; min-height: 220px;
+      max-height: 340px;
+    }
+    #body {
+      width: 100%; min-height: 200px; border: none; outline: none; resize: none;
+      font-size: 14px; font-family: var(--font); color: #202124; line-height: 1.6;
+      background: transparent;
+    }
+    #body::placeholder { color: #9aa0a6; }
+
+    /* ── Attachment chip ──────────────────── */
+    .attach-area { padding: 4px 16px 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+    .attach-chip {
+      display: none; align-items: center; gap: 8px;
+      border: 1px solid #dadce0; border-radius: 8px;
+      padding: 6px 10px; font-size: 13px; color: #3c4043;
+      background: #fff; max-width: 280px; cursor: default;
+    }
+    .attach-chip.show { display: inline-flex; }
+    .attach-chip-icon {
+      width: 28px; height: 28px; border-radius: 6px; background: #1a73e8;
+      color: #fff; font-size: 10px; font-weight: 600; display: flex;
+      align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .attach-chip-name {
+      font-size: 12px; color: #3c4043; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap; max-width: 180px;
+    }
+    .attach-chip-size { font-size: 11px; color: #80868b; }
+
+    /* ── Toolbar ──────────────────────────── */
+    .compose-toolbar {
+      display: flex; align-items: center; padding: 8px 12px;
+      border-top: 1px solid #e0e0e0; gap: 4px; flex-shrink: 0;
+    }
+    .send-btn {
+      background: var(--gmail-blue); color: #fff; border: none;
+      border-radius: 20px; padding: 8px 24px; font-size: 14px;
+      font-weight: 500; cursor: pointer; font-family: var(--font);
+      transition: background .15s, box-shadow .15s;
+    }
+    .send-btn:hover { background: var(--gmail-blue-dark); box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+    .send-btn:active { background: #0d47a1; }
+    .toolbar-sep { flex: 1; }
+    .toolbar-icon {
+      width: 36px; height: 36px; border-radius: 50%; border: none;
+      background: transparent; color: #444746; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; transition: background .15s;
+    }
+    .toolbar-icon:hover { background: rgba(0,0,0,.06); }
+    .attach-label { cursor: pointer; }
+    #attachment { display: none; }
+
+    .send-status {
+      font-size: 12px; color: #34a853; padding: 0 8px; font-weight: 500;
+    }
+    .send-status.hidden { display: none; }
+
+    /* ── Inbox rows (decorative) ───────────── */
+    .inbox-row {
+      display: flex; align-items: center; padding: 0 16px; height: 56px;
+      border-bottom: 1px solid #e0e0e0; cursor: default; font-size: 14px;
+      transition: background .1s;
+    }
+    .inbox-row:hover { background: #f2f6fc; box-shadow: 0 1px 3px rgba(0,0,0,.1) inset; }
+    .inbox-sender { width: 180px; font-weight: 500; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .inbox-subject { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #202124; }
+    .inbox-snippet { color: #5f6368; font-weight: 400; }
+    .inbox-time { color: #5f6368; font-size: 12px; flex-shrink: 0; margin-left: 16px; }
+    .inbox-unread .inbox-sender, .inbox-unread .inbox-subject { font-weight: 700; }
+    .unread-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--gmail-blue); flex-shrink: 0; margin-right: 12px; }
+    .read-dot { width: 8px; height: 8px; flex-shrink: 0; margin-right: 12px; }
+  </style>
+</head>
+<body>
+<!--
+  Local, offline Gmail-styled compose fixture for SyncNode.
+  REAL DOM driven by Playwright (browser agent). Send is inert — sets data-sent only.
+  The workflow stops at the approval boundary BEFORE clicking Send.
+  Element IDs: #to, #subject, #body, #attachment, #send-button, #send-status
+-->
+<div class="app">
+
+  <!-- Top bar -->
+  <header class="topbar">
+    <a class="logo" href="#">
+      <svg class="logo-icon" viewBox="0 0 55 40" xmlns="http://www.w3.org/2000/svg">
+        <path d="M5 5 L27.5 22 L50 5 L50 35 L5 35 Z" fill="none" stroke="#ccc" stroke-width="2"/>
+        <path d="M5 5 L5 35" stroke="#4285f4" stroke-width="5"/>
+        <path d="M50 5 L50 35" stroke="#34a853" stroke-width="5"/>
+        <path d="M5 5 L27.5 22 L50 5" fill="none" stroke="#ea4335" stroke-width="4"/>
+        <path d="M5 35 L15 35 L15 18 L5 5 Z" fill="#4285f4"/>
+        <path d="M50 35 L40 35 L40 18 L50 5 Z" fill="#34a853"/>
+        <path d="M15 18 L27.5 27 L40 18 L27.5 22 Z" fill="#fbbc05"/>
+      </svg>
+      <span class="logo-text">Gmail</span>
+    </a>
+
+    <div class="search-bar">
+      <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="#5f6368">
+        <path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+      </svg>
+      <input class="search-input" type="text" placeholder="Search mail" readonly />
+    </div>
+
+    <div class="avatar">S</div>
+  </header>
+
+  <div class="body">
+    <!-- Sidebar -->
+    <nav class="sidebar">
+      <button class="compose-btn" type="button">
+        <svg class="compose-icon" viewBox="0 0 24 24" fill="#001d35">
+          <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+        </svg>
+        Compose
+      </button>
+
+      <div class="nav-item active">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="#202124"><path d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 4-8 5-8-5V6l8 5 8-5v2z"/></svg>
+        Inbox <span class="nav-count">3</span>
+      </div>
+      <div class="nav-item">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="#444746"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+        Starred
+      </div>
+      <div class="nav-item">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="#444746"><path d="M22 9V7h-2V5a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2h2v-2h-2v-2h2v-2h-2V9h2zm-4 10H4V5h14v14z"/></svg>
+        Drafts <span class="nav-count">2</span>
+      </div>
+      <div class="nav-item">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="#444746"><path d="M22 15h-2v-2h2v2zm0-4h-2V9h2v2zm0 8h-2v-2h2v2zm-4 0H4V3h14v16zm-2-2V5H6v12h10z"/></svg>
+        Sent
+      </div>
+    </nav>
+
+    <!-- Inbox (decorative) -->
+    <main class="inbox">
+      <div class="inbox-row inbox-unread">
+        <span class="unread-dot"></span>
+        <span class="inbox-sender">SyncNode System</span>
+        <span class="inbox-subject">Run completed — <span class="inbox-snippet">Your workflow finished successfully. 3 artifacts produced.</span></span>
+        <span class="inbox-time">10:22 AM</span>
+      </div>
+      <div class="inbox-row">
+        <span class="read-dot"></span>
+        <span class="inbox-sender">Team Notifications</span>
+        <span class="inbox-subject">Weekly digest — <span class="inbox-snippet">Here's what happened in your workspace this week.</span></span>
+        <span class="inbox-time">Yesterday</span>
+      </div>
+      <div class="inbox-row inbox-unread">
+        <span class="unread-dot"></span>
+        <span class="inbox-sender">demo@example.com</span>
+        <span class="inbox-subject">Re: Project Report — <span class="inbox-snippet">Thanks for sending this over, I'll review today.</span></span>
+        <span class="inbox-time">Mon</span>
+      </div>
+      <div class="inbox-row">
+        <span class="read-dot"></span>
+        <span class="inbox-sender">Google Drive</span>
+        <span class="inbox-subject">Document shared with you — <span class="inbox-snippet">SyncNode Q3 Summary has been shared with your account.</span></span>
+        <span class="inbox-time">Sep 18</span>
+      </div>
+    </main>
+  </div>
+
+  <!-- ── Compose window (real, drivable DOM) ── -->
+  <form id="compose-form" class="compose-window" aria-label="New Message">
+
+    <div class="compose-header">
+      <span class="compose-title">New Message</span>
+      <div class="header-actions">
+        <button type="button" class="hbtn" title="Minimize">&#x2212;</button>
+        <button type="button" class="hbtn" title="Full screen">&#x2922;</button>
+        <button type="button" class="hbtn" title="Close">&#x2715;</button>
+      </div>
+    </div>
+
+    <div class="compose-fields">
+      <!-- To field -->
+      <div class="field-row">
+        <label class="field-label" for="to">To</label>
+        <div class="field-chip-area" id="to-chip-area">
+          <input type="email" id="to" name="to" aria-label="To"
+                 class="field-input" autocomplete="off" placeholder="" />
+        </div>
+      </div>
+
+      <!-- Subject field -->
+      <div class="field-row subject-row">
+        <label class="field-label" for="subject">Subject</label>
+        <input type="text" id="subject" name="subject" aria-label="Subject"
+               class="subject-input" autocomplete="off" placeholder="" />
+      </div>
+    </div>
+
+    <!-- Body -->
+    <div class="compose-body">
+      <textarea id="body" name="body" aria-label="Body"
+                placeholder="Compose email"></textarea>
+    </div>
+
+    <!-- Attachment chips (populated dynamically) -->
+    <div class="attach-area" id="attach-area"></div>
+
+    <!-- Toolbar -->
+    <div class="compose-toolbar">
+      <button type="button" id="send-button" class="send-btn" aria-label="Send">Send</button>
+
+      <label class="toolbar-icon attach-label" title="Attach files" for="attachment">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M16.5 6v11.5a4 4 0 0 1-8 0V5a2.5 2.5 0 0 1 5 0v10.5a1 1 0 0 1-2 0V6H10v9.5a2.5 2.5 0 0 0 5 0V5a4 4 0 0 0-8 0v12.5a5.5 5.5 0 0 0 11 0V6h-1.5z"/>
+        </svg>
+      </label>
+      <input type="file" id="attachment" name="attachment"
+             aria-label="Attachment" multiple />
+
+      <button type="button" class="toolbar-icon" title="Formatting options">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M2.5 4v3h5v12h3V7h5V4h-13zm19 5h-9v3h3v7h3v-7h3V9z"/></svg>
+      </button>
+      <button type="button" class="toolbar-icon" title="Insert link">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7a5 5 0 0 0 0 10h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zm4.1 1h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4a5 5 0 0 0 0-10z"/></svg>
+      </button>
+      <button type="button" class="toolbar-icon" title="Insert emoji">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z"/></svg>
+      </button>
+
+      <span class="toolbar-sep"></span>
+      <span class="send-status hidden" id="send-status" data-testid="send-status" data-sent="false"></span>
+
+      <button type="button" class="toolbar-icon" title="More options">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
+      </button>
+    </div>
+
+  </form>
+
+  <script>
+    // ── Live recipient chip ────────────────────────────────────────────
+    const toInput = document.getElementById('to');
+    const chipArea = document.getElementById('to-chip-area');
+
+    function updateChip() {
+      const val = toInput.value.trim();
+      let chip = chipArea.querySelector('.recipient-chip');
+      if (val) {
+        if (!chip) {
+          chip = document.createElement('div');
+          chip.className = 'recipient-chip';
+          chipArea.insertBefore(chip, toInput);
+        }
+        const initials = val[0].toUpperCase();
+        chip.innerHTML = `<div class="chip-avatar">${initials}</div><span>${val}</span>`;
+        toInput.placeholder = '';
+      } else {
+        if (chip) chip.remove();
+        toInput.placeholder = '';
+      }
+    }
+    toInput.addEventListener('input', updateChip);
+    toInput.addEventListener('change', updateChip);
+    setInterval(() => {
+      if (toInput.value && !chipArea.querySelector('.recipient-chip')) updateChip();
+    }, 300);
+
+    // ── Parse Gmail-style URL parameters and pre-fill fields ──────────
+    // MUST run after updateChip is defined above.
+    // Params: ?to=...&subject=...&body=... forwarded from the Gmail compose URL.
+    (function prefillFromURL() {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const to      = params.get('to')      || params.get('recipient') || '';
+        const subject = params.get('subject') || '';
+        const body    = params.get('body')    || '';
+
+        if (to) {
+          document.getElementById('to').value = to;
+          updateChip();   // safe — defined above
+        }
+        if (subject) {
+          document.getElementById('subject').value = subject;
+        }
+        if (body) {
+          document.getElementById('body').value = body;
+        }
+      } catch (e) {
+        console.warn('[SyncNode compose] prefill failed:', e);
+      }
+    })();
+
+    // ── Attachment chips ────────────────────────────────────────────────
+    const fileInput = document.getElementById('attachment');
+    const attachArea = document.getElementById('attach-area');
+
+    const EXT_COLORS = { DOCX:'#1a73e8', XLSX:'#34a853', PPTX:'#fbbc05', PDF:'#ea4335', PNG:'#9c27b0', JPG:'#ff5722' };
+
+    function formatSize(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1048576) return (bytes/1024).toFixed(1) + ' KB';
+      return (bytes/1048576).toFixed(1) + ' MB';
+    }
+
+    function renderAttachments(files) {
+      // Remove old chips
+      attachArea.querySelectorAll('.attach-chip').forEach(c => c.remove());
+      if (!files || files.length === 0) return;
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        const ext = (f.name.split('.').pop() || '').toUpperCase().slice(0, 4);
+        const color = EXT_COLORS[ext] || '#5f6368';
+        const chip = document.createElement('div');
+        chip.className = 'attach-chip show';
+        chip.innerHTML = `
+          <div class="attach-chip-icon" style="background:${color}">${ext || 'FILE'}</div>
+          <div>
+            <div class="attach-chip-name" title="${f.name}">${f.name}</div>
+            <div class="attach-chip-size">${formatSize(f.size)}</div>
+          </div>`;
+        attachArea.appendChild(chip);
+      }
+    }
+
+    fileInput.addEventListener('change', function(e) {
+      renderAttachments(e.target.files);
+    });
+
+    // Poll so Playwright set_input_files is reflected
+    let lastFileCount = 0;
+    let lastFirstName = '';
+    setInterval(() => {
+      const files = fileInput.files;
+      const count = files ? files.length : 0;
+      const firstName = (files && files[0]) ? files[0].name : '';
+      if (count !== lastFileCount || firstName !== lastFirstName) {
+        lastFileCount = count;
+        lastFirstName = firstName;
+        renderAttachments(files);
+      }
+    }, 250);
+
+    // ── Send button (inert — approval gate stops before this) ──────────
+    document.getElementById('send-button').addEventListener('click', function() {
+      const status = document.getElementById('send-status');
+      status.setAttribute('data-sent', 'true');
+      status.textContent = 'Sent';
+      status.classList.remove('hidden');
+      status.classList.add('show');
+    });
+  </script>
+</body>
+</html>

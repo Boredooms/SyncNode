@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SyncNode SSE / Audit Event Contract",
+  "version": "1.0.0",
+  "description": "Canonical event names the backend emits over SSE and records in the audit chain. Electron renders these without importing backend internals. No private chain-of-thought is ever emitted; only decision summaries, tool calls, observations, verification, recovery, and approval.",
+  "eventTypes": {
+    "stream.connected": "SSE stream established for a run.",
+    "run.created": "A run was accepted. payload: goal, model_id.",
+    "rag.query": "Conditional RAG started. payload: goal.",
+    "rag.retrieval.completed": "RAG finished. payload: required, reason, tags, documents[], count.",
+    "intent.completed": "Structured intent produced. payload: intent.",
+    "plan.created": "Execution plan produced. payload: total_steps, steps[].",
+    "plan.validated": "Plan sanitized against the tool registry. payload: total_steps, steps[].",
+    "agent.spawned": "An agent was resolved for a step. payload: agent_id, step_key, action.",
+    "agent.plan_summary": "Safe, observable agent reasoning summary (not chain-of-thought).",
+    "tool.authorized": "A tool call passed validation + authorization. payload: tool, agent, step_key, risk.",
+    "tool.invoked": "A tool call started. payload: step_key, tool_key, inputs (truncated).",
+    "tool.started": "Execution engine began a tool. payload: tool, agent, step_key.",
+    "tool.completed": "Tool finished. payload: tool_key, step_key, success.",
+    "observation.captured": "Environment observed after an action. payload: step_key, ts, observation_id?",
+    "screenshot.created": "A screenshot observation was captured. payload: observation_id, path, sha256.",
+    "target.resolved": "A UI/DOM target was uniquely resolved.",
+    "target.ambiguous": "A UI/DOM target was ambiguous; re-observation needed.",
+    "verification.started": "Postcondition verification began. payload: step_key.",
+    "verification.passed": "All postconditions passed with real evidence. payload: step_key, assertions.",
+    "verification.failed": "A postcondition failed. payload: step_key, result, failure_reason.",
+    "recovery.triggered": "Recovery was invoked. payload: step_key, error_class, tier, attempt.",
+    "approval.requested": "A sensitive action needs human approval. payload: approval_id, step_key, action, risk.",
+    "approval.decided": "A human decided an approval. payload: approval_id, decision.",
+    "workflow.memory_recorded": "The run trajectory was recorded for safe learning. payload: task_type, success, steps.",
+    "run.waiting_approval": "The run paused at the approval boundary. payload: approval_id, action.",
+    "run.completed": "The run completed. payload: run_id.",
+    "run.failed": "The run failed. payload: error.",
+    "run.cancelled": "The run was cancelled."
+  },
+  "envelope": {
+    "type": "object",
+    "required": ["event_type", "run_id", "ts"],
+    "properties": {
+      "event_type": {"type": "string"},
+      "run_id": {"type": "string"},
+      "ts": {"type": "number"}
+    },
+    "additionalProperties": true
+  }
+}

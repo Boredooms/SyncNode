@@ -1,0 +1,241 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ──────────────────────────────────────────────
+   SyncNode Design Tokens
+   ────────────────────────────────────────────── */
+:root {
+  /* Base surfaces */
+  --background: 0 0% 4%;
+  --foreground: 0 0% 95%;
+
+  --surface-0: 0 0% 5%;
+  --surface-1: 0 0% 7%;
+  --surface-2: 0 0% 9%;
+  --surface-3: 0 0% 11%;
+  --surface-4: 0 0% 14%;
+
+  /* Borders */
+  --border-subtle: 0 0% 13%;
+  --border: 0 0% 18%;
+  --border-strong: 0 0% 25%;
+
+  /* Text */
+  --text-primary: 0 0% 95%;
+  --text-secondary: 0 0% 70%;
+  --text-tertiary: 0 0% 48%;
+  --text-disabled: 0 0% 34%;
+
+  /* Accent */
+  --accent: 0 0% 92%;
+  --accent-foreground: 0 0% 7%;
+
+  /* Semantic */
+  --success: 142 55% 50%;
+  --warning: 38 90% 58%;
+  --danger: 0 68% 58%;
+  --info: 210 90% 62%;
+
+  /* Interaction */
+  --focus: 0 0% 92%;
+  --selection: 0 0% 16%;
+
+  /* shadcn compat */
+  --radius: 6px;
+  --card: var(--surface-1);
+  --card-foreground: var(--foreground);
+  --popover: var(--surface-2);
+  --popover-foreground: var(--foreground);
+  --primary: var(--accent);
+  --primary-foreground: var(--accent-foreground);
+  --secondary: var(--surface-3);
+  --secondary-foreground: var(--text-secondary);
+  --muted: var(--surface-2);
+  --muted-foreground: var(--text-tertiary);
+  --destructive: var(--danger);
+  --destructive-foreground: 0 0% 95%;
+  --input: var(--border);
+  --ring: var(--focus);
+}
+
+/* ──────────────────────────────────────────────
+   Reset
+   ────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  user-select: none;
+}
+
+/* Allow text selection in specific areas */
+input,
+textarea,
+[data-selectable],
+.selectable {
+  user-select: text;
+}
+
+/* ──────────────────────────────────────────────
+   Scrollbar
+   ────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--border-strong));
+}
+
+/* ──────────────────────────────────────────────
+   Electron drag region
+   ────────────────────────────────────────────── */
+.app-drag-region {
+  -webkit-app-region: drag;
+}
+
+.app-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* ──────────────────────────────────────────────
+   Typography utilities
+   ────────────────────────────────────────────── */
+.font-mono {
+  font-family: 'JetBrains Mono', Consolas, monospace;
+}
+
+/* ──────────────────────────────────────────────
+   Status dot
+   ────────────────────────────────────────────── */
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.running {
+  background-color: hsl(var(--info));
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+.status-dot.completed {
+  background-color: hsl(var(--success));
+}
+
+.status-dot.failed {
+  background-color: hsl(var(--danger));
+}
+
+.status-dot.waiting {
+  background-color: hsl(var(--warning));
+}
+
+.status-dot.queued {
+  background-color: hsl(var(--text-tertiary));
+}
+
+.status-dot.idle {
+  background-color: hsl(var(--border-strong));
+}
+
+/* ──────────────────────────────────────────────
+   Panel / pane chrome
+   ────────────────────────────────────────────── */
+.sn-panel {
+  background-color: hsl(var(--surface-1));
+  border: 1px solid hsl(var(--border-subtle));
+}
+
+.sn-panel-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid hsl(var(--border-subtle));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+}
+
+/* ──────────────────────────────────────────────
+   Timeline item
+   ────────────────────────────────────────────── */
+.timeline-item {
+  display: grid;
+  grid-template-columns: 72px 80px 1fr;
+  align-items: center;
+  padding: 4px 12px;
+  gap: 8px;
+  border-bottom: 1px solid hsl(var(--border-subtle));
+  transition: background 0.1s;
+}
+
+.timeline-item:hover {
+  background-color: hsl(var(--surface-2));
+}
+
+/* ──────────────────────────────────────────────
+   Code / log surface
+   ────────────────────────────────────────────── */
+.log-surface {
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: hsl(var(--text-secondary));
+}
+
+/* ──────────────────────────────────────────────
+   Verification indicators
+   ────────────────────────────────────────────── */
+.verify-pass {
+  color: hsl(var(--success));
+}
+
+.verify-fail {
+  color: hsl(var(--danger));
+}
+
+/* ──────────────────────────────────────────────
+   Focus override
+   ────────────────────────────────────────────── */
+:focus-visible {
+  outline: 1px solid hsl(var(--focus));
+  outline-offset: 2px;
+}
+
+/* ── Remove all browser default white focus outlines globally ──────── */
+*:focus { outline: none; }
+*:focus-visible {
+  outline: 1px solid rgba(255,255,255,0.12);
+  outline-offset: 1px;
+}
+input:focus, textarea:focus, select:focus, button:focus {
+  outline: none;
+  box-shadow: none;
+}

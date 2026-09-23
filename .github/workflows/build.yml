@@ -1,0 +1,182 @@
+name: Build & Release SyncNode
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: '3.12'
+  NODE_VERSION: '20'
+
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+
+  # ── Backend: lint + type check ─────────────────────────────────────────────
+  backend-check:
+    name: Backend lint & type check
+    runs-on: windows-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '${{ env.PYTHON_VERSION }}', cache: pip }
+      - name: Install
+        run: pip install ruff mypy --quiet
+      - name: Ruff lint
+        run: ruff check src/ --select=E,F --ignore=E501,F401
+        continue-on-error: true
+      - name: Type check
+        run: mypy src/syncnode_backend --ignore-missing-imports
+        continue-on-error: true
+
+  # ── Frontend: type check ───────────────────────────────────────────────────
+  frontend-check:
+    name: Frontend TypeScript check
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: frontend/electron } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm, cache-dependency-path: frontend/electron/package-lock.json }
+      - run: npm ci
+      - run: npx tsc --noEmit
+        continue-on-error: true
+
+  # ── Backend PyInstaller bundle ─────────────────────────────────────────────
+  build-backend:
+    name: Build Python backend executable
+    runs-on: windows-latest
+    needs: [backend-check]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with: { python-version: '${{ env.PYTHON_VERSION }}', cache: pip }
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: pip-${{ runner.os }}-${{ hashFiles('backend/pyproject.toml', 'ai_ml/pyproject.toml') }}
+
+      - name: Install backend + AI/ML deps + PyInstaller
+        run: |
+          pip install -e backend -e ai_ml pyinstaller --quiet
+          pip install chromadb sentence-transformers --quiet
+
+      - name: Build backend executable
+        shell: pwsh
+        run: .\scripts\build_backend.ps1
+
+      - name: Upload backend bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: syncnode-backend-win
+          path: dist/syncnode-backend/
+          retention-days: 7
+
+  # ── Electron frontend build ────────────────────────────────────────────────
+  build-electron:
+    name: Build Electron Windows installer
+    runs-on: windows-latest
+    needs: [frontend-check, build-backend]
+    defaults: { run: { working-directory: frontend/electron } }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm, cache-dependency-path: frontend/electron/package-lock.json }
+
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: frontend/electron/node_modules
+          key: node-${{ runner.os }}-${{ hashFiles('frontend/electron/package-lock.json') }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Electron app
+        run: npm run build
+        env: { NODE_ENV: production }
+
+      - name: Download backend bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: syncnode-backend-win
+          path: frontend/electron/bundled-backend/
+
+      - name: Install electron-builder
+        run: npm install electron-builder --save-dev --silent
+
+      - name: Package Windows NSIS installer + portable
+        shell: pwsh
+        run: npx electron-builder --win nsis portable --publish never
+        env:
+          NODE_ENV: production
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload NSIS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: SyncNode-Windows-Setup
+          path: frontend/electron/dist/SyncNode-Setup-*.exe
+          if-no-files-found: warn
+
+      - name: Upload portable exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: SyncNode-Windows-Portable
+          path: frontend/electron/dist/SyncNode-Portable-*.exe
+          if-no-files-found: warn
+
+  # ── GitHub Release (on version tag only) ──────────────────────────────────
+  release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs: build-electron
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: SyncNode-Windows-Setup
+          path: release/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: SyncNode-Windows-Portable
+          path: release/
+        continue-on-error: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.exe
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
+          body: |
+            ## SyncNode ${{ github.ref_name }}
+
+            ### Installation
+            1. Download `SyncNode-Setup-*.exe` and run it
+            2. Install [Ollama](https://ollama.com) and pull the model: `ollama pull gemma4:e4b`
+            3. Launch SyncNode from the Start Menu or Desktop shortcut
+
+            ### Portable
+            Download `SyncNode-Portable-*.exe` for a no-install version.
+
+            ### Requirements
+            - Windows 10/11 x64
+            - NVIDIA GPU (RTX series recommended) or CPU fallback
+            - 8 GB RAM minimum, 16 GB recommended
+            - Ollama installed separately (model downloaded on first run)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SyncNode Frontend Entity Contract",
+  "version": "1.0.0",
+  "description": "Stable entity shapes the Electron client consumes over REST/SSE. Electron must never import backend Python classes; it depends only on these shapes.",
+  "$defs": {
+    "Run": {
+      "type": "object",
+      "required": ["run_id", "status", "goal"],
+      "properties": {
+        "run_id": {"type": "string"},
+        "status": {"enum": ["queued", "running", "waiting_approval", "completed", "failed", "cancelled"]},
+        "goal": {"type": "string"},
+        "model_id": {"type": ["string", "null"]},
+        "created_at": {"type": "string"},
+        "completed_at": {"type": ["string", "null"]},
+        "error_message": {"type": ["string", "null"]}
+      }
+    },
+    "RunStep": {
+      "type": "object",
+      "required": ["step_key", "status"],
+      "properties": {
+        "step_key": {"type": "string"},
+        "agent": {"type": ["string", "null"]},
+        "action": {"type": ["string", "null"]},
+        "status": {"enum": ["pending", "running", "completed", "failed", "skipped", "waiting_approval"]},
+        "verification": {"type": ["string", "null"]},
+        "retries": {"type": "integer"}
+      }
+    },
+    "Agent": {
+      "type": "object",
+      "required": ["agent_id", "capabilities", "allowed_tools"],
+      "properties": {
+        "agent_id": {"type": "string"},
+        "name": {"type": "string"},
+        "description": {"type": "string"},
+        "capabilities": {"type": "array", "items": {"type": "string"}},
+        "risk_class": {"type": "string"},
+        "allowed_tools": {"type": "array", "items": {"type": "string"}},
+        "scoped_tools": {"type": "array"}
+      }
+    },
+    "ToolCall": {
+      "type": "object",
+      "required": ["tool_key", "status"],
+      "properties": {
+        "tool_key": {"type": "string"},
+        "status": {"enum": ["pending", "running", "completed", "failed"]},
+        "side_effect_type": {"type": ["string", "null"]},
+        "duration_ms": {"type": ["integer", "null"]},
+        "error_message": {"type": ["string", "null"]}
+      }
+    },
+    "Tool": {
+      "type": "object",
+      "required": ["key", "risk_class", "side_effect_type"],
+      "properties": {
+        "key": {"type": "string"},
+        "name": {"type": "string"},
+        "version": {"type": "integer"},
+        "description": {"type": "string"},
+        "capabilities": {"type": "array", "items": {"type": "string"}},
+        "risk_class": {"type": "string"},
+        "side_effect_type": {"type": "string"},
+        "idempotency": {"type": "string"},
+        "verification_strategy": {"type": "string"},
+        "required_permissions": {"type": "array", "items": {"type": "string"}},
+        "supported_applications": {"type": "array", "items": {"type": "string"}},
+        "resource_locks": {"type": "array", "items": {"type": "string"}},
+        "input_schema": {"type": "object"},
+        "output_schema": {"type": "object"}
+      }
+    },
+    "Observation": {
+      "type": "object",
+      "properties": {
+        "observation_type": {"type": "string"},
+        "application": {"type": ["string", "null"]},
+        "window_title": {"type": ["string", "null"]},
+        "process_id": {"type": ["integer", "null"]},
+        "screenshot_path": {"type": ["string", "null"]},
+        "screenshot_hash": {"type": ["string", "null"]},
+        "captured_at": {"type": "string"}
+      }
+    },
+    "Verification": {
+      "type": "object",
+      "required": ["result"],
+      "properties": {
+        "step_key": {"type": "string"},
+        "result": {"enum": ["PASS", "FAIL", "STALE", "UNAVAILABLE"]},
+        "assertions": {"type": "array"},
+        "failure_reason": {"type": ["string", "null"]}
+      }
+    },
+    "Recovery": {
+      "type": "object",
+      "properties": {
+        "step_key": {"type": "string"},
+        "error_class": {"type": "string"},
+        "tier": {"enum": ["RETRY", "REOBSERVE", "FALLBACK", "REPLAN", "ESCALATE", "ABORT"]},
+        "attempt": {"type": "integer"},
+        "backoff_ms": {"type": "integer"},
+        "circuit_open": {"type": "boolean"}
+      }
+    },
+    "Approval": {
+      "type": "object",
+      "required": ["approval_id", "risk_class", "action_summary", "status"],
+      "properties": {
+        "approval_id": {"type": "string"},
+        "step_id": {"type": ["string", "null"]},
+        "risk_class": {"type": "string"},
+        "action_summary": {"type": "string"},
+        "status": {"enum": ["pending", "approved", "rejected", "expired"]},
+        "expires_at": {"type": ["string", "null"]}
+      }
+    },
+    "Artifact": {
+      "type": "object",
+      "required": ["name", "path"],
+      "properties": {
+        "name": {"type": "string"},
+        "type": {"type": "string"},
+        "path": {"type": "string"},
+        "sha256": {"type": ["string", "null"]},
+        "verified": {"type": "boolean"}
+      }
+    },
+    "KnowledgeDocument": {
+      "type": "object",
+      "required": ["id", "type", "trust"],
+      "properties": {
+        "id": {"type": "string"},
+        "type": {"type": "string"},
+        "path": {"type": "string"},
+        "title": {"type": "string"},
+        "trust": {"enum": ["authoritative_policy", "reference", "workflow", "untrusted"]},
+        "version": {"type": "integer"},
+        "status": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "content_hash": {"type": "string"},
+        "body": {"type": "string"}
+      }
+    },
+    "WorkflowMemory": {
+      "type": "object",
+      "properties": {
+        "task_type": {"type": "string"},
+        "tool_sequence": {"type": "array", "items": {"type": "string"}},
+        "success": {"type": "boolean"},
+        "total_reward": {"type": "number"}
+      }
+    },
+    "CandidateStrategy": {
+      "type": "object",
+      "properties": {
+        "id": {"type": "string"},
+        "task_type": {"type": "string"},
+        "summary": {"type": "string"},
+        "rationale": {"type": "string"},
+        "lifecycle": {"enum": ["CANDIDATE", "EVALUATING", "APPROVED", "ACTIVE", "DEPRECATED", "REJECTED"]}
+      }
+    },
+    "ModelCall": {
+      "type": "object",
+      "properties": {
+        "model_id": {"type": "string"},
+        "input_tokens": {"type": "integer"},
+        "output_tokens": {"type": "integer"},
+        "latency_ms": {"type": "number"}
+      }
+    },
+    "SSEEvent": {"$ref": "../events/events.json#/envelope"}
+  }
+}
