@@ -2,6 +2,11 @@
 
 **Think locally. Act intelligently.**
 
+[![Build & Release](https://github.com/Boredooms/SyncNode/actions/workflows/build.yml/badge.svg)](https://github.com/Boredooms/SyncNode/actions/workflows/build.yml)
+[![Latest Release](https://img.shields.io/github/v/release/Boredooms/SyncNode?color=emerald&label=download)](https://github.com/Boredooms/SyncNode/releases/latest)
+![Platform](https://img.shields.io/badge/platform-Windows-blue)
+![License](https://img.shields.io/badge/license-Proprietary-gray)
+
 SyncNode is a fully offline, sovereign AI automation workbench that runs entirely on your local machine. No cloud. No subscriptions. No data leaving your device.
 
 ---

@@ -137,14 +137,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SyncNode-Windows-Setup
-          path: dist/SyncNode-Setup-*.exe
+          path: frontend/electron/dist/SyncNode-Setup-*.exe
           if-no-files-found: warn
 
       - name: Upload portable exe
         uses: actions/upload-artifact@v4
         with:
           name: SyncNode-Windows-Portable
-          path: dist/SyncNode-Portable-*.exe
+          path: frontend/electron/dist/SyncNode-Portable-*.exe
           if-no-files-found: warn
 
   # ── GitHub Release (on version tag) ───────────────────────────────────────
