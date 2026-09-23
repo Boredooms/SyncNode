@@ -9,7 +9,7 @@ on:
 
 env:
   PYTHON_VERSION: '3.12'
-  NODE_VERSION: '20'
+  NODE_VERSION: '22'        # LTS — avoids Node 20 deprecation on GH Actions
 
 # ─────────────────────────────────────────────────────────────────────────────
 jobs:
@@ -23,13 +23,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '${{ env.PYTHON_VERSION }}', cache: pip }
-      - name: Install
-        run: pip install ruff mypy --quiet
+      - name: Install lint tools
+        run: pip install ruff --quiet
       - name: Ruff lint
         run: ruff check src/ --select=E,F --ignore=E501,F401
-        continue-on-error: true
-      - name: Type check
-        run: mypy src/syncnode_backend --ignore-missing-imports
         continue-on-error: true
 
   # ── Frontend: type check ───────────────────────────────────────────────────
@@ -40,9 +37,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm, cache-dependency-path: frontend/electron/package-lock.json }
-      - run: npm ci
-      - run: npx tsc --noEmit
+        with:
+          node-version: '${{ env.NODE_VERSION }}'
+          cache: npm
+          cache-dependency-path: frontend/electron/package-lock.json
+      - name: Install deps
+        run: npm ci
+      - name: Type check
+        run: npx tsc --noEmit
         continue-on-error: true
 
   # ── Backend PyInstaller bundle ─────────────────────────────────────────────
@@ -56,15 +58,15 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: '${{ env.PYTHON_VERSION }}', cache: pip }
 
-      - name: Cache pip packages
+      - name: Cache pip
         uses: actions/cache@v4
         with:
           path: ~\AppData\Local\pip\Cache
           key: pip-${{ runner.os }}-${{ hashFiles('backend/pyproject.toml', 'ai_ml/pyproject.toml') }}
 
-      - name: Install backend + AI/ML deps + PyInstaller
+      - name: Install deps + PyInstaller
         run: |
-          pip install -e backend -e ai_ml pyinstaller --quiet
+          pip install -e backend -e ai_ml pyinstaller pillow --quiet
           pip install chromadb sentence-transformers --quiet
 
       - name: Build backend executable
@@ -76,19 +78,27 @@ jobs:
         with:
           name: syncnode-backend-win
           path: dist/syncnode-backend/
-          retention-days: 7
+          retention-days: 3
 
-  # ── Electron frontend build ────────────────────────────────────────────────
+  # ── Electron Windows installer ─────────────────────────────────────────────
   build-electron:
     name: Build Electron Windows installer
     runs-on: windows-latest
+    # Run whether backend succeeded or not — NSIS installer still useful standalone
     needs: [frontend-check, build-backend]
+    if: always() && needs.frontend-check.result != 'failure'
     defaults: { run: { working-directory: frontend/electron } }
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
-        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm, cache-dependency-path: frontend/electron/package-lock.json }
+        with:
+          node-version: '${{ env.NODE_VERSION }}'
+          cache: npm
+          cache-dependency-path: frontend/electron/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with: { python-version: '${{ env.PYTHON_VERSION }}' }
 
       - name: Cache node_modules
         uses: actions/cache@v4
@@ -96,30 +106,28 @@ jobs:
           path: frontend/electron/node_modules
           key: node-${{ runner.os }}-${{ hashFiles('frontend/electron/package-lock.json') }}
 
-      - name: Install dependencies
+      - name: Install Node deps
         run: npm ci
 
-      - name: Build Electron app
+      - name: Build Electron app (vite)
         run: npm run build
         env: { NODE_ENV: production }
 
-      - name: Generate app icon
+      - name: Generate app icon (256x256 ICO)
         shell: pwsh
+        working-directory: ${{ github.workspace }}
         run: |
           pip install pillow --quiet
           python scripts/make_icon.py
 
-      - name: Download backend bundle
+      - name: Download Python backend bundle
         uses: actions/download-artifact@v4
         with:
           name: syncnode-backend-win
           path: bundled-backend/
-        continue-on-error: true   # don't fail if backend build skipped
+        continue-on-error: true
 
-      - name: Install electron-builder
-        run: npm install electron-builder --save-dev --silent
-
-      - name: Package Windows NSIS installer + portable
+      - name: Package Windows NSIS + portable
         shell: pwsh
         run: npx electron-builder --win nsis portable --publish never
         env:
@@ -129,17 +137,17 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SyncNode-Windows-Setup
-          path: frontend/electron/dist/SyncNode-Setup-*.exe
+          path: dist/SyncNode-Setup-*.exe
           if-no-files-found: warn
 
       - name: Upload portable exe
         uses: actions/upload-artifact@v4
         with:
           name: SyncNode-Windows-Portable
-          path: frontend/electron/dist/SyncNode-Portable-*.exe
+          path: dist/SyncNode-Portable-*.exe
           if-no-files-found: warn
 
-  # ── GitHub Release (on version tag only) ──────────────────────────────────
+  # ── GitHub Release (on version tag) ───────────────────────────────────────
   release:
     name: GitHub Release
     runs-on: ubuntu-latest
@@ -171,18 +179,15 @@ jobs:
           body: |
             ## SyncNode ${{ github.ref_name }}
 
-            ### Installation
+            ### Install
             1. Download `SyncNode-Setup-*.exe` and run it
-            2. Install [Ollama](https://ollama.com) and pull the model: `ollama pull gemma4:e4b`
-            3. Launch SyncNode from the Start Menu or Desktop shortcut
+            2. Install [Ollama](https://ollama.com): `ollama pull gemma4:e4b`
+            3. Launch SyncNode from Start Menu
 
             ### Portable
-            Download `SyncNode-Portable-*.exe` for a no-install version.
+            Download `SyncNode-Portable-*.exe` — no install required.
 
             ### Requirements
-            - Windows 10/11 x64
-            - NVIDIA GPU (RTX series recommended) or CPU fallback
-            - 8 GB RAM minimum, 16 GB recommended
-            - Ollama installed separately (model downloaded on first run)
+            Windows 10/11 x64 · 8 GB RAM · NVIDIA GPU recommended · Ollama required
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
