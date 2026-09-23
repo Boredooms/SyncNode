@@ -26,19 +26,12 @@
     },
     "files": [
       "out/**/*",
-      "node_modules/**/*",
-      "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "src/renderer/public",
-        "to": "public",
-        "filter": ["**/*"]
-      }
+      "!out/**/__pycache__/**",
+      "!**/*.map"
     ],
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
+        { "target": "nsis",     "arch": ["x64"] },
         { "target": "portable", "arch": ["x64"] }
       ],
       "icon": "build/icon.ico",
@@ -52,7 +45,6 @@
       "shortcutName": "SyncNode",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "include": "build/installer.nsh",
       "warningsAsErrors": false
     },
     "portable": {

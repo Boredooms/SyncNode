@@ -107,7 +107,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: syncnode-backend-win
-          path: frontend/electron/bundled-backend/
+          path: bundled-backend/
+        continue-on-error: true   # don't fail if backend build skipped
 
       - name: Install electron-builder
         run: npm install electron-builder --save-dev --silent
@@ -117,7 +118,6 @@ jobs:
         run: npx electron-builder --win nsis portable --publish never
         env:
           NODE_ENV: production
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload NSIS installer
         uses: actions/upload-artifact@v4
