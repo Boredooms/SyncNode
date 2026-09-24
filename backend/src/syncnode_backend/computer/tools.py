@@ -219,9 +219,53 @@ async def tool_computer_launch_app(
 
     `executable` is optional; when omitted it defaults to Microsoft Word (the
     common desktop-automation target following a Windows Search for Word).
+
+    Smart file-open shortcut: if `executable` looks like an absolute file path
+    (e.g. "C:\\...\\SyncNode_Data.xlsx"), the function detects the file extension,
+    maps it to the correct Office app, and opens the file directly — no need for
+    the caller to supply `args` separately.
     """
     if not (executable or "").strip():
         executable = "word"
+
+    # ── Smart file-path detection ─────────────────────────────────────────────
+    # If `executable` looks like an absolute file path to a known document type,
+    # extract the app from the extension and pass the path as args[0].
+    _FILE_EXT_TO_APP = {
+        ".docx": "winword.exe", ".doc": "winword.exe",
+        ".xlsx": "excel.exe",   ".xls": "excel.exe",   ".csv": "excel.exe",
+        ".pptx": "powerpnt.exe", ".ppt": "powerpnt.exe",
+        ".txt": "notepad.exe",
+    }
+    exe_stripped = executable.strip().strip('"').strip("'")
+    _detected_exe = None
+    _detected_args = args
+    if (
+        len(exe_stripped) > 3
+        and (exe_stripped[1:3] in (":\\", ":/") or exe_stripped.startswith("\\\\"))
+    ):
+        # Looks like an absolute path — check extension
+        from pathlib import Path as _P
+        ext = _P(exe_stripped).suffix.lower()
+        mapped = _FILE_EXT_TO_APP.get(ext)
+        if mapped:
+            _detected_exe = mapped
+            _detected_args = [exe_stripped]
+            logger.info("[LAUNCH] auto-detected file path → executable=%s args=%s", mapped, [exe_stripped])
+        else:
+            # Might be a bare path to a .exe — try using it directly via shell
+            import subprocess as _sp
+            try:
+                proc = _sp.Popen([exe_stripped] + (args or []), shell=False)
+                import time as _t; _t.sleep(wait_ms / 1000.0)
+                return {"launched": True, "executable": exe_stripped, "pid": proc.pid, "wait_ms": wait_ms}
+            except Exception as exc:
+                return {"launched": False, "executable": exe_stripped, "error": str(exc)}
+
+    if _detected_exe:
+        executable = _detected_exe
+        args = _detected_args
+
     # Security: only allow listed executables. Values are resolved to a concrete
     # path so launching does not depend on the process PATH.
     ALLOWED_EXECUTABLES = {
@@ -245,11 +289,12 @@ async def tool_computer_launch_app(
     key = Path(executable).name.lower().strip()
     resolved = ALLOWED_EXECUTABLES.get(key)
     if resolved is None:
-        # Not an allowed application — fail closed.
         return {
             "launched": False,
             "executable": executable,
-            "error": f"Executable {executable!r} is not in the allow-list.",
+            "error": f"Executable {executable!r} is not in the allow-list. "
+                     f"Use: word, excel, powerpoint, notepad. "
+                     f"To open a file, pass it as args=[\"<full_path>\"] with executable=\"excel\".",
         }
     resolved = _resolve_executable_path(resolved)
 

@@ -103,11 +103,13 @@ async def _build_run_context(run_id: str) -> str:
             )
             artifacts = result2.scalars().all()
             if artifacts:
-                lines.append("\nProduced Artifacts:")
+                lines.append("\nProduced Artifacts (use these exact paths to open/edit files):")
                 for a in artifacts[:10]:
                     v = "✓" if a.verified else "?"
-                    entry = f"  {v} {a.name} ({a.artifact_type}) — {Path(a.path).name if a.path else '—'}"
-                    lines.append(entry[:100])
+                    # Show full path so Chat AI can reference it directly
+                    full_path = a.path or "—"
+                    entry = f"  {v} {a.name} ({a.artifact_type}) → {full_path}"
+                    lines.append(entry[:200])
                 if len(artifacts) > 10:
                     lines.append(f"  … and {len(artifacts) - 10} more")
 
@@ -150,8 +152,8 @@ async def _build_run_context(run_id: str) -> str:
 
     result_str = "\n".join(lines)
     # Hard cap: if somehow still too long, truncate with notice
-    if len(result_str) > 4000:
-        result_str = result_str[:3950] + "\n  … [context truncated]"
+    if len(result_str) > 6000:
+        result_str = result_str[:5950] + "\n  … [context truncated]"
     return result_str
 
 
@@ -171,15 +173,49 @@ CAPABILITIES:
 - Read environment variables (system.env_get)
 - Read Windows registry (system.registry_get)
 - Create Word, Excel, PowerPoint documents (document.* / excel.* / powerpoint.*)
-- Open files IN their app: use computer.launch_app with executable only — the system
-  auto-injects the file path. Examples:
-    computer.launch_app(executable="winword")   → opens .docx in Word
-    computer.launch_app(executable="excel")     → opens .xlsx in Excel  
-    computer.launch_app(executable="powerpnt")  → opens .pptx in PowerPoint
-  DO NOT use windows_search to open a specific document — it won't pass the file path.
-- Control Windows apps via UI Automation (computer.uia_type / computer.uia_click / computer.key_press)
-- Search Windows taskbar for apps (computer.windows_search) — only for launching apps, not opening specific files
+- Open ANY file in its application using TWO correct methods:
+
+  METHOD A — Open by absolute path (PREFERRED for Chat, always works):
+    computer.windows_search(query="<filename>", file_path="<absolute_path>")
+    Examples:
+      computer.windows_search(query="SyncNode_Data.xlsx", file_path="C:\\syncnode\\workspace\\demo\\runs\\<id>\\excel\\SyncNode_Data.xlsx")
+      computer.windows_search(query="report.docx", file_path="C:\\Users\\...\\report.docx")
+    This opens the file directly in its default app WITHOUT the Search UI.
+    The file_path parameter is MANDATORY when opening a specific document.
+
+  METHOD B — Open app then inject file (for run-internal orchestrated workflows only):
+    computer.launch_app(executable="excel", args=["<absolute_path>"])
+    computer.launch_app(executable="word",  args=["<absolute_path>"])
+    computer.launch_app(executable="powerpnt", args=["<absolute_path>"])
+    Examples:
+      computer.launch_app(executable="excel", args=["C:\\syncnode\\workspace\\...\\SyncNode_Data.xlsx"])
+      computer.launch_app(executable="word",  args=["C:\\syncnode\\workspace\\...\\report.docx"])
+
+  METHOD C — Smart shortcut (just pass the full file path as executable):
+    computer.launch_app(executable="C:\\syncnode\\workspace\\...\\SyncNode_Data.xlsx")
+    The tool auto-detects .xlsx/.docx/.pptx extensions and maps to the correct app.
+
+  NEVER: computer.launch_app(executable="excel")  ← without args, opens blank Excel, NOT your file
+  NEVER: computer.windows_search(query="SyncNode_Data.xlsx")  ← without file_path, opens Bing
+
+- To find a file path first: system.fs_search(query="SyncNode_Data.xlsx", search_path="C:\\syncnode\\workspace")
+  Then use the returned path in METHOD A or B.
+
+- Control Windows apps via UI Automation after opening:
+    computer.uia_type(text="content", window_title="Excel", wait_ready_ms=3000)
+    computer.uia_click(window_title="Excel", name="Save")
+    computer.key_press(keys="{Ctrl}s")  ← save
+    computer.key_press(keys="{Ctrl}w")  ← close tab
+    computer.key_press(keys="{Alt}{F4}") ← close app
+
+- Search Windows taskbar for apps (computer.windows_search with query only, no file_path)
 - Control Chromium browser (browser.*)
+
+CORRECT PATTERN — "open the Excel file and add data":
+  Step 1: system.fs_search(query="SyncNode_Data.xlsx", search_path="C:\\syncnode\\workspace") → get path
+  Step 2: computer.windows_search(query="SyncNode_Data.xlsx", file_path="<path from step 1>") → opens in Excel
+  Step 3: computer.uia_type(text="new data", window_title="Excel", wait_ready_ms=3000) → types into Excel
+  Step 4: computer.key_press(keys="{Ctrl}s") → saves
 
 SAFETY RAILS (built into the tools — you don't need to worry about these):
 - fs_delete and process_kill default to DRY RUN — always show the dry-run result first
