@@ -110,6 +110,11 @@ async def close_browser() -> None:
     logger.info("Browser closed")
 
 
+async def get_page():
+    """Return the currently active Playwright page, or None if no browser is open."""
+    return _page if _page_is_alive(_page) else None
+
+
 _MAIL_COMPOSE_HINTS = ("mail", "compose", "webmail", "gmail", "outlook", "draft")
 
 

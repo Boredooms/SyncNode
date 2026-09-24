@@ -172,6 +172,25 @@ ASSERTION TYPE RULES — these MUST be followed exactly:
     word_content_verified, content_in_document, text_in_window,
     text_visible_in_window, paragraph_present, document_has_content
 
+WORKFLOW.PAUSE IS ALWAYS THE LAST STEP — ABSOLUTE RULE:
+  workflow.pause terminates the plan. NO steps may come after it. EVER.
+  The orchestrator freezes at workflow.pause and waits for human approval.
+  After approval the run is COMPLETED — it does NOT resume executing more steps.
+  If you add steps after workflow.pause, they will NEVER execute and WILL confuse the run.
+  WRONG (step 11 will never run):
+    step 10: workflow.pause
+    step 11: computer.launch_app  ← NEVER executes — run is frozen at step 10
+  CORRECT:
+    step 10: workflow.pause  ← last step — nothing after this
+
+UIA_TYPE MUST NOT DUPLICATE DOCX CONTENT — RULE:
+  If a plan includes both document.create_docx and computer.uia_type for the same document:
+  - document.create_docx writes the content to the file on disk
+  - computer.uia_type opens Word and the SAME content will be there already
+  - The orchestrator automatically sets clear_first=true for uia_type to REPLACE (not append)
+  - Do NOT write the same content twice — uia_type replaces the existing paragraph, not adds to it
+  - This is correct behavior: the live-typing step shows the content appearing in real time
+
 Return ONLY a valid JSON object: {"steps": [...]}
 """
 

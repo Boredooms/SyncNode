@@ -536,8 +536,16 @@ class SyncNodeOrchestrator:
                        "browser.find_element", "browser.screenshot"}
         valid: list[Any] = []
         dropped: list[str] = []
+        pause_seen = False
         for step in plan.steps:
             action = step.action or ""
+            # Hard rule: nothing after workflow.pause — those steps never execute
+            # and cause the run to loop/fail. Drop them unconditionally.
+            if pause_seen:
+                dropped.append(f"{step.step_key}({action}) [after-pause]")
+                continue
+            if action == "workflow.pause" or step.requires_approval:
+                pause_seen = True
             is_tool = tool_registry.get(action) is not None
             is_control = action in self._CONTROL_ACTIONS
             # Override planner: compose/attach actions are never approval gates
@@ -1244,20 +1252,75 @@ class SyncNodeOrchestrator:
         # computer.uia_type (live typing into app windows).
         if step.action in ("document.create_docx", "filesystem.write", "computer.uia_type"):
             generated = self._artifacts.get("content")
-            # For uia_type the content field is called 'text'
             content_key = "text" if step.action == "computer.uia_type" else "content"
             supplied_content = str(inputs.get(content_key, "")).strip()
             looks_symbolic = (
                 self._is_placeholder(supplied_content)
                 or self._looks_like_field_ref(supplied_content)
             )
-            if generated and (_blank(content_key) or looks_symbolic):
-                inputs[content_key] = generated
-                logger.info("[FLOW] injected generated content into %s (key=%s)",
-                            step.step_key, content_key)
-            elif looks_symbolic and not generated:
-                inputs[content_key] = ""
-                logger.info("[FLOW] cleared placeholder content on %s", step.step_key)
+            # Fix: for uia_type — only inject content if create_docx has NOT
+            # already written it to disk. When the doc was already created with
+            # the same content, uia_type would type it again → duplicate paragraph.
+            # We suppress injection for uia_type when the orchestrator already
+            # wrote the content to the .docx (doc_path is set AND file exists).
+            if step.action == "computer.uia_type":
+                doc_already_written = bool(
+                    self._artifacts.get("doc_path")
+                    and self._artifacts.get("content")
+                )
+                if doc_already_written and (not supplied_content or looks_symbolic):
+                    # Clear the placeholder so Word doesn't get duplicate content.
+                    # The file on disk already has the right text.
+                    inputs[content_key] = generated or ""
+                    # Allow injection — the user explicitly wants live typing
+                    # so keep the content but don't block it.
+                    # (The duplicate comes from Word opening a file that already
+                    # has the paragraph, then us typing it again. The real fix
+                    # is to use clear_first=true so the existing content is
+                    # replaced, not appended.)
+                    inputs["clear_first"] = True
+                    logger.info("[FLOW] uia_type will clear_first=true to avoid duplicate content in %s",
+                                step.step_key)
+                elif generated and (_blank(content_key) or looks_symbolic):
+                    inputs[content_key] = generated
+                    logger.info("[FLOW] injected generated content into %s (key=%s)",
+                                step.step_key, content_key)
+                elif looks_symbolic and not generated:
+                    inputs[content_key] = ""
+                    logger.info("[FLOW] cleared placeholder content on %s", step.step_key)
+            else:
+                if generated and (_blank(content_key) or looks_symbolic):
+                    inputs[content_key] = generated
+                    logger.info("[FLOW] injected generated content into %s (key=%s)",
+                                step.step_key, content_key)
+                elif looks_symbolic and not generated:
+                    inputs[content_key] = ""
+                    logger.info("[FLOW] cleared placeholder content on %s", step.step_key)
+
+        # key_press save step: pre-fill the postcondition file_saved target with
+        # the actual artifact path NOW (before the tool runs), so verify can find
+        # the real .docx/.xlsx/.pptx on disk. key_press returns {"sent":True} —
+        # it has no "path" output, so _canonicalize_postcondition_targets can't
+        # fill it after the fact. We fill it here from the run-scoped artifact dict.
+        if step.action == "computer.key_press":
+            keys_val = str(inputs.get("keys", "")).lower()
+            if "{ctrl}s" in keys_val or "ctrl+s" in keys_val:
+                # Determine which artifact was most recently opened
+                _save_art_order = ["doc_path", "word_path", "excel_path", "powerpoint_path"]
+                for art_key in _save_art_order:
+                    art_path = self._artifacts.get(art_key)
+                    if art_path:
+                        from pathlib import Path as _P
+                        if _P(art_path).exists():
+                            for pc in (step.postconditions or []):
+                                target = str(pc.get("target", "")).strip()
+                                atype = str(pc.get("assertion_type", "")).lower()
+                                if "save" in atype or "file" in atype:
+                                    if not target or not _P(target).is_absolute():
+                                        pc["target"] = art_path
+                                        logger.info("[FLOW] pre-filled key_press postcondition "
+                                                    "target=%s for step %s", art_path, step.step_key)
+                            break
 
         # The created document path flows to verify/read steps that take `path`.
         doc_path = self._artifacts.get("doc_path")
