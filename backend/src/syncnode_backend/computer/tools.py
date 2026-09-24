@@ -348,6 +348,7 @@ async def tool_computer_uia_type(
     automation_id: Optional[str] = None,
     clear_first: bool = False,
     wait_ms: int = 100,
+    wait_ready_ms: int = 2000,  # wait for window to be ready before typing
 ) -> dict[str, Any]:
     """Type text into a UIA control (or the currently focused element).
 
@@ -356,47 +357,68 @@ async def tool_computer_uia_type(
     If neither is given, types into whatever has focus.
 
     Use clear_first=True to select-all before typing (replaces existing content).
+    wait_ready_ms: extra wait after clicking window before SendKeys fires (allows
+    Word/Excel to fully focus the document area — default 2000ms).
     """
     try:
         import uiautomation as auto
 
+        win = None
         if window_title:
-            # Find the window
-            win = auto.WindowControl(searchDepth=1, Name=window_title)
-            if not win.Exists(3, 0.5):
-                # Partial match
+            # Poll for the window up to wait_ready_ms before giving up
+            # (Word can take 1-3s to become interactive after launch_app)
+            poll_deadline = time.time() + max(wait_ready_ms / 1000.0, 3.0)
+            while time.time() < poll_deadline:
+                candidate = auto.WindowControl(searchDepth=1, Name=window_title)
+                if candidate.Exists(0.5, 0.1):
+                    win = candidate
+                    break
+                # partial match
                 for w in auto.GetRootControl().GetChildren():
                     if window_title.lower() in (w.Name or "").lower():
                         win = w
                         break
-                else:
-                    return {"typed": False, "error": f"Window '{window_title}' not found"}
+                if win:
+                    break
+                time.sleep(0.3)
+
+            if win is None:
+                # One final broader partial scan
+                for w in auto.GetRootControl().GetChildren():
+                    if window_title.lower() in (w.Name or "").lower():
+                        win = w
+                        break
+                if win is None:
+                    return {"typed": False, "error": f"Window '{window_title}' not found after {wait_ready_ms}ms"}
 
             if automation_id:
                 ctrl = win.Control(AutomationId=automation_id)
                 if ctrl.Exists(2, 0.3):
                     ctrl.Click()
-                    time.sleep(0.2)
+                    time.sleep(0.3)
                 else:
                     win.Click()
             else:
-                # Click into the window body to ensure focus
+                # Click into the window body to ensure document area focus
                 win.Click()
-        
+                # Additional wait so Word's editing area is ready for SendKeys
+                time.sleep(max(wait_ms / 1000.0, 0.5))
+
         time.sleep(wait_ms / 1000.0)
 
         if clear_first:
             auto.SendKeys("{Ctrl}a", waitTime=0.1)
-            time.sleep(0.1)
+            time.sleep(0.15)
 
         # Type the text — SendKeys handles special chars
         # For long content, split into chunks to avoid UIA buffer overflow
         chunk_size = 200
         for i in range(0, len(text), chunk_size):
             chunk = text[i:i + chunk_size]
-            auto.SendKeys(chunk, waitTime=0.02)
+            auto.SendKeys(chunk, waitTime=0.03)
 
-        time.sleep(wait_ms / 1000.0)
+        # Small settle wait so the content is flushed into the document
+        time.sleep(max(wait_ms / 1000.0, 0.2))
         logger.info("[UIA] typed %d chars into window=%s", len(text), window_title or "focused")
         return {
             "typed": True,
@@ -626,8 +648,8 @@ def register_computer_tools(registry) -> None:
             key="computer.uia_type",
             name="UIA Type Text",
             version=1,
-            description="Type text into a live application window or UIA control. Use window_title to target a specific open app (e.g. 'Document1 - Microsoft Word'). Set clear_first=true to replace existing content.",
-            input_schema={"text": "str", "window_title": "Optional[str]", "automation_id": "Optional[str]", "clear_first": "bool?", "wait_ms": "int?"},
+            description="Type text into a live application window or UIA control. Use window_title to target a specific open app (e.g. 'Document1 - Microsoft Word'). Set clear_first=true to replace existing content. wait_ready_ms (default 2000) controls how long to poll for the window before typing — increase for slow-opening apps.",
+            input_schema={"text": "str", "window_title": "Optional[str]", "automation_id": "Optional[str]", "clear_first": "bool?", "wait_ms": "int?", "wait_ready_ms": "int?"},
             output_schema={"typed": "bool", "chars": "int"},
             capabilities=["uia_control", "window_management"],
             risk_class="medium",

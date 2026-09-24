@@ -1162,8 +1162,9 @@ class SyncNodeOrchestrator:
 
         The model frequently emits symbolic references instead of real data,
         e.g. "$generate_content.output", "{{content}}", "<content>",
-        "[previous step output]". These must be treated as empty so real
-        artifacts from prior steps are substituted.
+        "[previous step output]", "[[Output from generate_word_content]]".
+        These must be treated as empty so real artifacts from prior steps
+        are substituted.
         """
         if not isinstance(value, str):
             return False
@@ -1176,6 +1177,8 @@ class SyncNodeOrchestrator:
             or (v.startswith("{") and v.endswith("}") and "." in v and " " not in v)
             or (v.startswith("<") and v.endswith(">"))
             or (v.startswith("[") and v.endswith("]"))
+            or (v.startswith("[[") and v.endswith("]]"))   # double-bracket: [[Output from step]]
+            or (v.startswith("(") and v.endswith(")") and " " not in v and len(v) < 80)
         )
 
     def _resolve_step_inputs(self, step) -> None:

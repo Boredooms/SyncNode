@@ -748,6 +748,9 @@ def _normalize_assertion_type(raw: str) -> str:
     pptx_keywords   = {"pptx", "slide", "presentation", "powerpoint", "deck"}
     search_keywords = {"search", "result", "found", "visible", "opened", "notepad", "word", "app"}
     screen_keywords = {"screenshot", "screen", "capture", "evidence", "desktop", "image", "photo", "png"}
+    uia_keywords    = {"element", "control", "uia", "ui_element", "window_text", "typing",
+                       "typed", "type", "keys", "keypress", "shortcut", "interact",
+                       "paragraph", "text_present", "content_in"}
     shell_keywords  = {"command", "shell", "executed", "output", "stdout", "drive", "disk",
                        "process", "system", "info", "data", "retrieved", "completed",
                        "success", "ran", "result", "running", "listed", "env", "variable"}
@@ -759,6 +762,8 @@ def _normalize_assertion_type(raw: str) -> str:
         return "pptx_structure_valid"
     if any(k in base_lower for k in screen_keywords):
         return "file_exists"
+    if any(k in base_lower for k in uia_keywords):
+        return "command_succeeded"
     if any(k in base_lower for k in search_keywords):
         return "search_result_found"
     if any(k in base_lower for k in shell_keywords):
@@ -853,6 +858,36 @@ _ASSERTION_ALIASES = {
     "input_filled":          "command_succeeded",
     "word_content_typed":    "command_succeeded",
     "document_edited":       "command_succeeded",
+    # UI element / UIA assertions the model frequently hallucinates
+    # All map to command_succeeded which reads typed/clicked/sent from tool output
+    "ui_element_contains":   "command_succeeded",
+    "ui_element_text":       "command_succeeded",
+    "element_contains":      "command_succeeded",
+    "element_text":          "command_succeeded",
+    "element_value":         "command_succeeded",
+    "element_visible":       "command_succeeded",
+    "control_contains":      "command_succeeded",
+    "control_text":          "command_succeeded",
+    "window_contains":       "command_succeeded",
+    "window_text":           "command_succeeded",
+    "document_text_present": "command_succeeded",
+    "text_present":          "command_succeeded",
+    "text_visible":          "command_succeeded",
+    "content_in_window":     "command_succeeded",
+    "paragraph_typed":       "command_succeeded",
+    "text_inserted":         "command_succeeded",
+    "keys_sent":             "command_succeeded",
+    "keypress_sent":         "command_succeeded",
+    "shortcut_sent":         "command_succeeded",
+    "ctrl_s_sent":           "command_succeeded",
+    "save_sent":             "command_succeeded",
+    "word_typed":            "command_succeeded",
+    "typing_complete":       "command_succeeded",
+    "input_complete":        "command_succeeded",
+    "uia_typed":             "command_succeeded",
+    "uia_type_complete":     "command_succeeded",
+    "uia_interaction":       "command_succeeded",
+    "interaction_complete":  "command_succeeded",
     "document_saved":        "file_exists",
     "file_saved":            "file_exists",
     "saved_successfully":    "file_exists",
@@ -885,6 +920,13 @@ _ASSERTION_ALIASES = {
     "field_filled": "field_value",
     "field_populated": "field_value",
     "value_set": "field_value",
+    # Approval / pause step
+    "approval_requested":    "command_succeeded",
+    "approval_pending":      "command_succeeded",
+    "paused_for_approval":   "command_succeeded",
+    "waiting_approval":      "command_succeeded",
+    "human_approval":        "command_succeeded",
+    "requires_human_approval": "command_succeeded",
     "workbook_valid": "xlsx_structure_valid",
     "spreadsheet_valid": "xlsx_structure_valid",
     "presentation_valid": "pptx_structure_valid",

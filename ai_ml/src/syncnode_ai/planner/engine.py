@@ -96,26 +96,53 @@ For LIVE document editing (create file → open in app → type → save):
      inputs: {"executable": "winword"}   ← opens Word WITH the .docx auto-injected
      inputs: {"executable": "excel"}     ← opens Excel WITH the .xlsx auto-injected
      inputs: {"executable": "powerpnt"}  ← opens PowerPoint WITH the .pptx auto-injected
-  b. computer.uia_type to type content into the window
-     inputs: {"text": "<content>", "window_title": "Word", "clear_first": false}
-  c. computer.key_press to save: inputs: {"keys": "{Ctrl}s"}
-  d. computer.key_press to close: inputs: {"keys": "{Alt}{F4}"}
+     postconditions: [{"assertion_type": "application_running", "target": "WINWORD.EXE", "expected": "true"}]
+
+  b. computer.uia_type (computer) — type content into the live window
+     inputs: {"text": "<content>", "window_title": "Word", "clear_first": false, "wait_ready_ms": 3000}
+     ↑ wait_ready_ms: ALWAYS set to 3000 for Word/Excel/PowerPoint — they need time to focus.
+     postconditions: [{"assertion_type": "content_typed", "target": "typed", "expected": "true"}]
+
+     !! CRITICAL: assertion_type for computer.uia_type MUST be "content_typed" !!
+     NEVER use these — they do not exist and will ALWAYS cause failure:
+       ui_element_contains, ui_element_text, element_contains, element_text,
+       window_text, document_text_present, text_present, word_content_verified,
+       content_in_document, text_in_window, text_visible_in_window
+
+  c. computer.key_press (computer) to save:
+     inputs: {"keys": "{Ctrl}s"}
+     postconditions: [{"assertion_type": "file_saved", "target": "<docx_path>"}]
+     ↑ The target must be the actual file path from the create_docx step — not a bare filename.
+     Leave it blank ("") — the orchestrator will fill it from the actual artifact path.
+
+  d. computer.key_press to close (optional): inputs: {"keys": "{Alt}{F4}"}
 
 For a multi-document + email workflow, the CORRECT plan is:
 1. writer.generate_paragraph (writer)     -> content_generated
-2. document.create_docx (document)        -> file_exists
+2. document.create_docx (document)        -> file_exists   (leave path blank — orchestrator scopes it)
 3. excel.create (office)                  -> file_exists   (inputs: {"rows": [["Category","Value","Notes"],["Automation",95,"pass"]]})
 4. powerpoint.create (office)             -> file_exists   (inputs: {"title": "SyncNode Demo", "slides": [{"title":"Metrics","body":"95% accuracy"},{"title":"Next Steps","body":"Deploy to prod"}]})
-5. computer.launch_app (computer)         -> application_running (inputs: {"executable": "winword"})
-6. computer.uia_type (computer)           -> content_typed
-   inputs: {"text": "<paragraph>", "window_title": "Word", "clear_first": false}
-7. computer.key_press (computer)          -> file_saved    (inputs: {"keys": "{Ctrl}s"})
+5. computer.launch_app (computer)         -> application_running
+   inputs: {"executable": "winword"}
+   postconditions: [{"assertion_type": "application_running", "target": "WINWORD.EXE", "expected": "true"}]
+6. computer.uia_type (computer)           -> content_typed  ← MUST be "content_typed", nothing else
+   inputs: {"text": "<paragraph content here>", "window_title": "Word", "clear_first": false, "wait_ready_ms": 3000}
+   postconditions: [{"assertion_type": "content_typed", "target": "typed", "expected": "true"}]
+7. computer.key_press (computer)          -> file_saved
+   inputs: {"keys": "{Ctrl}s"}
+   postconditions: [{"assertion_type": "file_saved", "target": ""}]
 8. browser.navigate (browser)             -> page_loaded
    CRITICAL: embed ALL email fields in the URL:
    url = "https://mail.google.com/mail/u/0/?view=cm&fs=1&to=<RECIPIENT>&su=<SUBJECT>&body=<BODY>"
-   URL-encode spaces as +.
-9. browser.attach_file (browser)          -> attachment_present (inputs: {} — all artifacts auto-attached)
+   URL-encode spaces as +. Example:
+   "https://mail.google.com/mail/u/0/?view=cm&fs=1&to=demo@syncnode.ai&su=Q4+Package&body=Hi+Team"
+   postconditions: [{"assertion_type": "page_loaded", "target": "mail.google.com"}]
+9. browser.attach_file (browser)          -> attachment_present
+   inputs: {}  ← LEAVE EMPTY — orchestrator auto-attaches ALL run artifacts
+   postconditions: [{"assertion_type": "attachment_present", "target": "file"}]
 10. workflow.pause (supervisor)           -> requires_approval: true  (NEVER add browser.click/send)
+    inputs: {}
+    postconditions: [{"assertion_type": "approval_requested", "target": ""}]
 
 ═══════════════════════════════════════════════════════════════
 CRITICAL RULES (always apply)
@@ -130,6 +157,20 @@ CRITICAL RULES (always apply)
 - The browser.attach_file step attaches ALL workspace artifacts automatically — do NOT put paths in inputs.
 - For the final step with requires_approval=true, set action="workflow.pause" and agent="supervisor".
 - NEVER pass a bare filename as computer.windows_search `query` without also providing `file_path`.
+
+ASSERTION TYPE RULES — these MUST be followed exactly:
+  computer.uia_type   → postcondition MUST be: {"assertion_type": "content_typed", "target": "typed"}
+  computer.key_press  → postcondition MUST be: {"assertion_type": "file_saved",    "target": ""}
+  computer.launch_app → postcondition MUST be: {"assertion_type": "application_running", "target": "WINWORD.EXE"}
+  browser.navigate    → postcondition MUST be: {"assertion_type": "page_loaded",   "target": "mail.google.com"}
+  browser.attach_file → postcondition MUST be: {"assertion_type": "attachment_present", "target": "file"}
+  workflow.pause      → postcondition MUST be: {"assertion_type": "approval_requested", "target": ""}
+
+  FORBIDDEN assertion types (these do not exist — using them ALWAYS fails the step):
+    ui_element_contains, ui_element_text, element_contains, element_text,
+    window_text, document_text_present, text_present, text_visible,
+    word_content_verified, content_in_document, text_in_window,
+    text_visible_in_window, paragraph_present, document_has_content
 
 Return ONLY a valid JSON object: {"steps": [...]}
 """
