@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Send, Plus, Trash2, MessageSquare, Wrench, Cpu,
   ChevronDown, Zap, Loader2, AlertCircle, BookOpen, X,
+  Paperclip, FileText, FileSpreadsheet, Presentation, File,
+  CheckCircle2,
 } from 'lucide-react'
 import { cn } from '../lib/utils'
 import {
@@ -14,6 +16,30 @@ import type { ChatSession, ChatMessage, ChatStreamEvent } from '../lib/api/types
 import { useHealthStore } from '../stores/healthStore'
 import { Skeleton, EmptyState } from '../components/ui/primitives'
 import { toast } from 'sonner'
+
+const BASE_URL = 'http://127.0.0.1:8000'
+
+// ── Supported attachment types ────────────────────────────────────────────────
+const ATTACH_EXTS = ['.docx','.xlsx','.pptx','.pdf','.txt','.md','.csv','.json','.py','.ts','.js','.html']
+
+// ── Attachment state ──────────────────────────────────────────────────────────
+interface AttachedFile {
+  id: string
+  file: File
+  status: 'parsing' | 'ready' | 'error'
+  text?: string          // extracted text from the backend
+  charCount?: number
+  error?: string
+}
+
+function attachFileIcon(name: string) {
+  const ext = name.split('.').pop()?.toLowerCase() ?? ''
+  if (['docx','doc'].includes(ext))         return <FileText size={11} className="text-blue-400/70" />
+  if (['xlsx','xls','csv'].includes(ext))   return <FileSpreadsheet size={11} className="text-emerald-400/70" />
+  if (['pptx','ppt'].includes(ext))         return <Presentation size={11} className="text-orange-400/70" />
+  if (ext === 'pdf')                         return <FileText size={11} className="text-red-400/70" />
+  return <File size={11} className="text-white/40" />
+}
 
 // ── Types for local streaming state ──────────────────────────────────────────
 
@@ -196,6 +222,47 @@ export function Chat() {
   const health = useHealthStore()
   const modelOnline = health.overall?.status === 'ok' || health.overall?.status === 'healthy'
 
+  // ── Attachment state ───────────────────────────────────────────────────────
+  const [attachments, setAttachments] = useState<AttachedFile[]>([])
+  const attachInputRef = useRef<HTMLInputElement>(null)
+
+  const parseAttachment = useCallback(async (af: AttachedFile) => {
+    const update = (patch: Partial<AttachedFile>) =>
+      setAttachments(prev => prev.map(a => a.id === af.id ? { ...a, ...patch } : a))
+    try {
+      const form = new FormData()
+      form.append('file', af.file)
+      form.append('ingest', 'false')
+      const r = await fetch(`${BASE_URL}/api/v1/documents/upload`, { method: 'POST', body: form })
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}))
+        throw new Error(e.detail ?? `HTTP ${r.status}`)
+      }
+      const data = await r.json()
+      update({ status: 'ready', text: data.text ?? '', charCount: data.char_count ?? 0 })
+    } catch (e: any) {
+      update({ status: 'error', error: e.message })
+      toast.error(`Could not parse ${af.file.name}: ${e.message}`)
+    }
+  }, [])
+
+  const handleAttachFiles = (files: File[]) => {
+    const valid = files.filter(f => {
+      const ext = '.' + (f.name.split('.').pop()?.toLowerCase() ?? '')
+      return ATTACH_EXTS.includes(ext)
+    })
+    if (!valid.length) { toast.warning('No supported files selected'); return }
+    const entries: AttachedFile[] = valid.map(f => ({
+      id: `${f.name}-${Date.now()}`,
+      file: f, status: 'parsing',
+    }))
+    setAttachments(prev => [...entries, ...prev])
+    entries.forEach(af => parseAttachment(af))
+  }
+
+  const removeAttachment = (id: string) =>
+    setAttachments(prev => prev.filter(a => a.id !== id))
+
   // ── Load sessions ──────────────────────────────────────────────────────────
   const loadSessions = useCallback(async () => {
     try {
@@ -326,9 +393,18 @@ export function Chat() {
     setInput('')
     setSending(true)
 
+    // Collect ready attachments for this message, then clear them
+    const readyAttachments = attachments.filter(a => a.status === 'ready')
+    setAttachments([])
+
+    // Build user bubble content — show attached file names
+    const attachmentLabel = readyAttachments.length > 0
+      ? `\n\n📎 ${readyAttachments.map(a => a.file.name).join(', ')}`
+      : ''
+
     // Optimistic user bubble
     const userMsgId = `user-${Date.now()}`
-    setMessages((prev) => [...prev, { id: userMsgId, role: 'user', content: text }])
+    setMessages((prev) => [...prev, { id: userMsgId, role: 'user', content: text + attachmentLabel }])
 
     // Assistant streaming bubble
     const asstMsgId = `asst-${Date.now()}`
@@ -340,8 +416,18 @@ export function Chat() {
     let accContent = ''
     const toolMap = new Map<string, ToolExecution>()
 
+    // Merge all attachment text into one context block
+    const docContext = readyAttachments.length > 0
+      ? readyAttachments.map(a => `=== ${a.file.name} ===\n${a.text ?? ''}`.trim()).join('\n\n')
+      : undefined
+    const docName = readyAttachments.length === 1
+      ? readyAttachments[0].file.name
+      : readyAttachments.length > 1
+        ? `${readyAttachments.length} files`
+        : undefined
+
     try {
-      for await (const event of streamChatMessage(sid, text, enableTools)) {
+      for await (const event of streamChatMessage(sid, text, enableTools, undefined, docContext, docName)) {
         if (event.type === 'delta') {
           accContent += event.content
           setMessages((prev) =>
@@ -564,17 +650,98 @@ export function Chat() {
 
             {/* ── Input bar ── */}
             <div className="px-4 pb-4 flex-shrink-0">
+
+              {/* Hidden file input */}
+              <input
+                ref={attachInputRef}
+                type="file"
+                multiple
+                accept={ATTACH_EXTS.join(',')}
+                className="hidden"
+                onChange={(e) => {
+                  handleAttachFiles(Array.from(e.target.files ?? []))
+                  e.target.value = ''
+                }}
+              />
+
+              {/* Attachment chips — shown above the text box */}
+              <AnimatePresence>
+                {attachments.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="flex flex-wrap gap-1.5 mb-2 overflow-hidden"
+                  >
+                    {attachments.map(af => (
+                      <motion.div
+                        key={af.id}
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.9 }}
+                        className={cn(
+                          'flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[10px] font-mono',
+                          af.status === 'ready'   && 'border-emerald-500/20 bg-emerald-500/5 text-emerald-400/80',
+                          af.status === 'parsing' && 'border-white/[0.08] bg-white/[0.03] text-white/40',
+                          af.status === 'error'   && 'border-red-500/20 bg-red-500/5 text-red-400/70',
+                        )}
+                      >
+                        {attachFileIcon(af.file.name)}
+                        <span className="max-w-[120px] truncate">{af.file.name}</span>
+                        {af.status === 'parsing' && <Loader2 size={9} className="animate-spin opacity-60" />}
+                        {af.status === 'ready'   && <CheckCircle2 size={9} className="text-emerald-400/70" />}
+                        {af.status === 'error'   && <AlertCircle size={9} className="text-red-400/70" aria-label={af.error} />}
+                        {af.charCount != null && af.status === 'ready' && (
+                          <span className="text-white/25 ml-0.5">{(af.charCount / 1000).toFixed(1)}k</span>
+                        )}
+                        <button
+                          onClick={() => removeAttachment(af.id)}
+                          className="ml-0.5 text-white/30 hover:text-white/70 transition-colors"
+                        >
+                          <X size={9} />
+                        </button>
+                      </motion.div>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Text input + buttons */}
               <div
-                className="flex items-end gap-2 rounded-2xl border border-white/[0.08] bg-white/[0.03] px-4 py-3 focus-within:border-white/[0.12] transition-colors"
+                className="flex items-end gap-2 rounded-2xl border border-white/[0.08] bg-white/[0.03] px-3 py-3 focus-within:border-white/[0.12] transition-colors"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  handleAttachFiles(Array.from(e.dataTransfer.files))
+                }}
               >
+                {/* Attach button */}
+                <button
+                  onClick={() => attachInputRef.current?.click()}
+                  disabled={sending}
+                  className={cn(
+                    'flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center transition-colors',
+                    attachments.length > 0
+                      ? 'text-emerald-400/70 hover:bg-white/[0.06]'
+                      : 'text-white/25 hover:text-white/55 hover:bg-white/[0.05]',
+                    sending && 'opacity-40 pointer-events-none',
+                  )}
+                  title="Attach a document"
+                >
+                  <Paperclip size={13} />
+                </button>
+
                 <textarea
                   ref={inputRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder={enableTools
-                    ? "Ask me anything or say 'create a report', 'open Word'…"
-                    : "Ask me anything…"
+                  placeholder={
+                    attachments.some(a => a.status === 'ready')
+                      ? 'Ask about the attached file, summarise it, or start a workflow…'
+                      : enableTools
+                        ? "Ask me anything or say 'create a report', 'open Word'…"
+                        : 'Ask me anything…'
                   }
                   rows={1}
                   disabled={sending}
@@ -588,10 +755,10 @@ export function Chat() {
                 />
                 <button
                   onClick={send}
-                  disabled={!input.trim() || sending}
+                  disabled={(!input.trim() && !attachments.some(a => a.status === 'ready')) || sending}
                   className={cn(
                     'flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center transition-all',
-                    input.trim() && !sending
+                    (input.trim() || attachments.some(a => a.status === 'ready')) && !sending
                       ? 'bg-white/15 text-white/80 hover:bg-white/22'
                       : 'bg-white/5 text-white/20 cursor-not-allowed'
                   )}
@@ -603,7 +770,7 @@ export function Chat() {
                 </button>
               </div>
               <p className="text-[10px] text-white/18 mt-1.5 px-1">
-                Enter to send · Shift+Enter for new line · {enableTools ? 'Tools enabled' : 'Tools off'}
+                Enter to send · Shift+Enter for newline · {enableTools ? 'Tools on' : 'Tools off'} · Drop files to attach
               </p>
             </div>
           </>

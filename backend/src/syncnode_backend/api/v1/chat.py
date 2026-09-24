@@ -430,7 +430,9 @@ class CreateSessionRequest(BaseModel):
 class SendMessageRequest(BaseModel):
     content: str
     enable_tools: bool = True
-    run_id: Optional[str] = None   # override/attach run context per-message
+    run_id: Optional[str] = None        # override/attach run context per-message
+    document_context: Optional[str] = None  # pre-parsed document text injected as context
+    document_name: Optional[str] = None     # filename shown in the system prompt
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -620,6 +622,19 @@ async def chat_stream(session_id: str, req: SendMessageRequest):
                 system_parts.append(f"\n[CONVERSATION SUMMARY]\n{summary_text}")
             if run_ctx_text:
                 system_parts.append(f"\n{run_ctx_text}")
+            # Document context injected from the client (pre-parsed uploaded file)
+            if req.document_context:
+                doc_label = req.document_name or "uploaded document"
+                doc_text  = req.document_context[:12_000]
+                if len(req.document_context) > 12_000:
+                    doc_text += f"\n… [truncated — {len(req.document_context)} chars total]"
+                system_parts.append(
+                    f"\n[ATTACHED DOCUMENT: {doc_label}]\n"
+                    "The user has attached this document to the conversation. "
+                    "Read it carefully — you may be asked to summarise it, answer questions about it, "
+                    "transform its content, or use it inside a workflow.\n"
+                    f"--- BEGIN DOCUMENT ---\n{doc_text}\n--- END DOCUMENT ---"
+                )
             system_content = "\n".join(system_parts)
 
             # ── Build model messages ──────────────────────────────────────────

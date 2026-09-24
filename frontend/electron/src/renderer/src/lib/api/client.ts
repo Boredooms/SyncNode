@@ -551,15 +551,23 @@ export async function clearChatSession(sessionId: string): Promise<void> {
 /**
  * Stream a chat message. Returns an async generator of parsed ChatStreamEvent objects.
  * Pass runId to attach full workflow context (steps, artifacts, workspace files).
+ * Pass documentContext to inject pre-parsed file content into the model's system prompt.
  */
 export async function* streamChatMessage(
   sessionId: string,
   content: string,
   enableTools = true,
   runId?: string,
+  documentContext?: string,
+  documentName?: string,
 ): AsyncGenerator<ChatStreamEvent> {
-  const body: Record<string, unknown> = { content, enable_tools: enableTools }
-  if (runId) body.run_id = runId
+  const body: Record<string, unknown> = {
+    content,
+    enable_tools: enableTools,
+  }
+  if (runId)            body.run_id            = runId
+  if (documentContext)  body.document_context  = documentContext
+  if (documentName)     body.document_name     = documentName
   const res = await fetch(`${BASE_URL}/api/v1/chat/sessions/${sessionId}/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
