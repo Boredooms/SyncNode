@@ -28,7 +28,7 @@ into an ordered execution plan as a JSON array of steps.
 
 Each step MUST have:
 - step_key: unique string id for this step (e.g. "create_docx")
-- agent_key: which agent executes it (writer|document|computer|browser|verifier|recovery|supervisor)
+- agent_key: which agent executes it (writer|document|office|computer|browser|system|verifier|recovery|supervisor)
 - action: specific action name (e.g. "document.create_docx")
 - description: what this step does
 - dependencies: list of step_keys that must complete before this step
@@ -52,13 +52,44 @@ IMPORTANT — use ONLY these real tool actions (unknown tools are rejected):
   system.fs_delete, system.shell, system.process_list, system.process_kill,
   system.clipboard_get, system.clipboard_set, system.env_get, system.registry_get
 
-When the goal says to open an application from Windows, the FIRST computer step
-must be computer.windows_search (inputs: {"query": "Microsoft Word", "open_result": true}).
-Only launch_app as a fallback. Verify an application with assertion_type
-"application_running" (target = the app's process, e.g. "WINWORD.EXE") AFTER the
-step that launches it — never before.
+═══════════════════════════════════════════════════════════════
+RULE #1 — OPENING AN EXISTING FILE (highest priority rule)
+═══════════════════════════════════════════════════════════════
+When the goal is to OPEN an existing file (e.g. "open the word document you
+created", "open Q4_Report.docx", "show me the file"):
 
-For LIVE document editing (open app → type → save):
+  Step A — find the file:
+    action: system.fs_search   agent: system
+    inputs: {"query": "<filename>", "search_path": "C:\\syncnode\\workspace", "pattern": "*.docx"}
+    postconditions: [{"assertion_type": "shell_output_contains", "target": "stdout", "expected": ".docx"}]
+
+  Step B — open the file directly (depends on Step A):
+    action: computer.windows_search   agent: computer
+    inputs: {"query": "<filename>", "file_path": "<absolute_path_from_step_A>"}
+    postconditions: [{"assertion_type": "application_running", "target": "WINWORD.EXE", "expected": "true"}]
+
+  NEVER use computer.windows_search with just a filename as `query` and no `file_path`.
+  Doing so launches Windows Search and opens Bing — this is ALWAYS wrong for opening files.
+  The `file_path` parameter is MANDATORY when opening a specific document.
+
+  If the exact path is already known (e.g. it was just created in this run and
+  the orchestrator will inject it), use computer.launch_app instead:
+    action: computer.launch_app   agent: computer
+    inputs: {"executable": "winword"}   ← orchestrator auto-injects the .docx path
+
+═══════════════════════════════════════════════════════════════
+RULE #2 — LAUNCHING AN APP (no specific file)
+═══════════════════════════════════════════════════════════════
+When the goal is to launch an application WITHOUT opening a specific file
+(e.g. "open Microsoft Word", "open Excel"):
+  Use computer.windows_search with ONLY the app name as query:
+    inputs: {"query": "Microsoft Word", "open_result": true}
+  Verify with assertion_type "application_running" (target = process name "WINWORD.EXE").
+
+═══════════════════════════════════════════════════════════════
+RULE #3 — CREATING THEN OPENING (same run)
+═══════════════════════════════════════════════════════════════
+For LIVE document editing (create file → open in app → type → save):
   The orchestrator AUTOMATICALLY injects the correct file path into launch_app.
   Just set executable and leave args empty — the file opens automatically.
   a. computer.launch_app (computer) -> application_running
@@ -70,36 +101,35 @@ For LIVE document editing (open app → type → save):
   c. computer.key_press to save: inputs: {"keys": "{Ctrl}s"}
   d. computer.key_press to close: inputs: {"keys": "{Alt}{F4}"}
 
-  DO NOT use computer.windows_search to open a specific file — it opens the app
-  without the file. Use computer.launch_app with executable only (path auto-filled).
-
 For a multi-document + email workflow, the CORRECT plan is:
 1. writer.generate_paragraph (writer)     -> content_generated
-2. document.create_docx (document)        -> file_exists   (path auto-scoped, leave inputs={})
+2. document.create_docx (document)        -> file_exists
 3. excel.create (office)                  -> file_exists   (inputs: {"rows": [["Category","Value","Notes"],["Automation",95,"pass"]]})
 4. powerpoint.create (office)             -> file_exists   (inputs: {"title": "SyncNode Demo", "slides": [{"title":"Metrics","body":"95% accuracy"},{"title":"Next Steps","body":"Deploy to prod"}]})
-5. computer.launch_app (computer)         -> application_running (inputs: {"executable": "winword"} — orchestrator injects .docx path)
-6. computer.uia_type (computer)           -> content_typed (type into Word window)
+5. computer.launch_app (computer)         -> application_running (inputs: {"executable": "winword"})
+6. computer.uia_type (computer)           -> content_typed
    inputs: {"text": "<paragraph>", "window_title": "Word", "clear_first": false}
 7. computer.key_press (computer)          -> file_saved    (inputs: {"keys": "{Ctrl}s"})
 8. browser.navigate (browser)             -> page_loaded
    CRITICAL: embed ALL email fields in the URL:
    url = "https://mail.google.com/mail/u/0/?view=cm&fs=1&to=<RECIPIENT>&su=<SUBJECT>&body=<BODY>"
-   URL-encode spaces as +. Example:
-   "https://mail.google.com/mail/u/0/?view=cm&fs=1&to=demo@syncnode.ai&su=Q4+Package&body=Hi+Team"
-   The compose fixture pre-fills To/Subject/Body — NO browser.type steps needed.
+   URL-encode spaces as +.
 9. browser.attach_file (browser)          -> attachment_present (inputs: {} — all artifacts auto-attached)
 10. workflow.pause (supervisor)           -> requires_approval: true  (NEVER add browser.click/send)
 
-CRITICAL RULES:
+═══════════════════════════════════════════════════════════════
+CRITICAL RULES (always apply)
+═══════════════════════════════════════════════════════════════
 - NEVER use a tool not in the list above. Unknown tools are rejected and fail the run.
 - computer.windows_search and computer.launch_app use the "computer" agent.
 - computer.uia_type, computer.uia_click, computer.key_press use the "computer" agent.
-- excel.create, powerpoint.create, powerpoint.add_slide use the "office" agent.
+- excel.create, powerpoint.create use the "office" agent.
 - document.create_docx, writer.generate_paragraph use "document" / "writer" agents.
+- system.fs_search, system.fs_read, system.shell use the "system" agent.
 - browser.* steps use the "browser" agent.
 - The browser.attach_file step attaches ALL workspace artifacts automatically — do NOT put paths in inputs.
 - For the final step with requires_approval=true, set action="workflow.pause" and agent="supervisor".
+- NEVER pass a bare filename as computer.windows_search `query` without also providing `file_path`.
 
 Return ONLY a valid JSON object: {"steps": [...]}
 """

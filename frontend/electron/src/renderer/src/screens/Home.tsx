@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { motion } from 'framer-motion'
-import { ChevronRight, Cpu, Shield, Database, Globe } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { ChevronRight, ChevronDown, Cpu, Check, Loader2 } from 'lucide-react'
 import { cn } from '../lib/utils'
-import { createRun, listRuns } from '../lib/api/client'
+import { createRun, listRuns, listModels, getActiveModel, setActiveModel } from '../lib/api/client'
+import type { ModelProfile } from '../lib/api/types'
 import { useRunStore } from '../stores/runStore'
 import { useHealthStore } from '../stores/healthStore'
 import { StatusDot } from '../components/ui/primitives'
@@ -31,9 +32,51 @@ export function Home() {
   const { runList, setRunList, initRun, setActiveRunId } = useRunStore()
   const health = useHealthStore()
 
+  // ── Model switcher state ─────────────────────────────────────────────
+  const [models, setModels] = useState<ModelProfile[]>([])
+  const [activeModel, setActiveModelState] = useState<ModelProfile | null>(null)
+  const [modelDropOpen, setModelDropOpen] = useState(false)
+  const [modelSwitching, setModelSwitching] = useState(false)
+  const [modelSwitchMsg, setModelSwitchMsg] = useState<string | null>(null)
+  const dropRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => {
     listRuns().then(setRunList).catch(() => {})
+    // Load available models
+    listModels().then(setModels).catch(() => {})
+    getActiveModel().then(setActiveModelState).catch(() => {})
   }, [])
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (dropRef.current && !dropRef.current.contains(e.target as Node)) {
+        setModelDropOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const handleSwitchModel = async (modelId: string) => {
+    if (modelId === activeModel?.model_id) { setModelDropOpen(false); return }
+    setModelSwitching(true)
+    setModelSwitchMsg(null)
+    try {
+      const res = await setActiveModel(modelId)
+      setModelSwitchMsg(`Switched to ${modelId}`)
+      const updated = models.map(m => ({ ...m, is_active: m.model_id === modelId }))
+      setModels(updated)
+      setActiveModelState(updated.find(m => m.model_id === modelId) ?? null)
+      setTimeout(() => setModelSwitchMsg(null), 3000)
+    } catch (e: any) {
+      setModelSwitchMsg(`Error: ${e.message}`)
+      setTimeout(() => setModelSwitchMsg(null), 4000)
+    } finally {
+      setModelSwitching(false)
+      setModelDropOpen(false)
+    }
+  }
 
   const handleSubmit = async (taskGoal: string) => {
     const g = taskGoal.trim()
@@ -76,10 +119,108 @@ export function Home() {
           className="w-full max-w-[620px] space-y-7"
         >
 
-          {/* ── Greeting ── */}
-          <div>
-            <h1 className="text-[24px] font-light text-white/80 leading-tight">{GREETING}</h1>
-            <p className="text-[13px] text-white/35 mt-1">What should I work on?</p>
+          {/* ── Greeting + model switcher ── */}
+          <div className="flex items-start justify-between">
+            <div>
+              <h1 className="text-[24px] font-light text-white/80 leading-tight">{GREETING}</h1>
+              <p className="text-[13px] text-white/35 mt-1">What should I work on?</p>
+            </div>
+
+            {/* Model switcher dropdown */}
+            <div className="relative" ref={dropRef}>
+              <button
+                onClick={() => setModelDropOpen(v => !v)}
+                className={cn(
+                  'flex items-center gap-2 px-3 py-1.5 rounded-lg border text-[11px] transition-all duration-150',
+                  'border-white/[0.08] bg-white/[0.03] text-white/45',
+                  'hover:bg-white/[0.07] hover:text-white/70 hover:border-white/[0.14]',
+                  modelDropOpen && 'bg-white/[0.07] border-white/[0.14] text-white/70'
+                )}
+                title="Switch active model"
+              >
+                {modelSwitching ? (
+                  <Loader2 size={11} className="animate-spin text-white/40" />
+                ) : (
+                  <Cpu size={11} className="text-white/40" />
+                )}
+                <span className="font-mono max-w-[160px] truncate">
+                  {activeModel?.model_id ?? activeModel?.display_name ?? 'Loading…'}
+                </span>
+                <ChevronDown size={10} className={cn('transition-transform duration-150', modelDropOpen && 'rotate-180')} />
+              </button>
+
+              <AnimatePresence>
+                {modelDropOpen && models.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -6, scale: 0.97 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -4, scale: 0.97 }}
+                    transition={{ duration: 0.12 }}
+                    className={cn(
+                      'absolute right-0 top-full mt-1.5 z-50 min-w-[240px]',
+                      'rounded-xl border border-white/[0.09] bg-[#111111]',
+                      'shadow-[0_8px_32px_rgba(0,0,0,0.6)] overflow-hidden',
+                    )}
+                  >
+                    <div className="px-3 py-2 border-b border-white/[0.05]">
+                      <p className="text-[9px] uppercase tracking-[0.12em] text-white/25 font-semibold">
+                        Local Models
+                      </p>
+                    </div>
+                    <div className="max-h-[280px] overflow-y-auto">
+                      {models.map(m => (
+                        <button
+                          key={m.model_id}
+                          onClick={() => handleSwitchModel(m.model_id)}
+                          className={cn(
+                            'w-full flex items-center gap-2.5 px-3 py-2.5 text-left transition-colors',
+                            'hover:bg-white/[0.05]',
+                            m.is_active && 'bg-white/[0.04]',
+                          )}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className={cn(
+                              'text-[12px] font-mono truncate',
+                              m.is_active ? 'text-white/85' : 'text-white/50',
+                            )}>
+                              {m.model_id}
+                            </p>
+                            <p className="text-[10px] text-white/25 mt-0.5">
+                              {[
+                                m.capabilities.parameter_size,
+                                m.capabilities.quantization,
+                                m.capabilities.vision && 'vision',
+                                m.capabilities.context_window && `${(m.capabilities.context_window / 1024).toFixed(0)}k ctx`,
+                              ].filter(Boolean).join(' · ')}
+                            </p>
+                          </div>
+                          {m.is_active && <Check size={12} className="text-emerald-400 flex-shrink-0" />}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="px-3 py-2 border-t border-white/[0.05]">
+                      <p className="text-[9px] text-white/20">
+                        Changes apply to new runs · ollama pull to add models
+                      </p>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Switch confirmation toast */}
+              <AnimatePresence>
+                {modelSwitchMsg && (
+                  <motion.p
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    className="absolute right-0 top-full mt-1 text-[10px] text-emerald-400/80 whitespace-nowrap"
+                  >
+                    {modelSwitchMsg}
+                  </motion.p>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
 
           {/* ── Composer ── */}

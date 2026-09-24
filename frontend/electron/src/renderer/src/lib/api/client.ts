@@ -499,6 +499,25 @@ export async function reviewLearningCandidate(
   })
 }
 
+// ── Models ────────────────────────────────────────────────────────────────────
+import type { ModelProfile } from './types'
+
+export async function listModels(): Promise<ModelProfile[]> {
+  const res = await request<any>('/api/v1/models')
+  return Array.isArray(res) ? res : (res.models ?? [])
+}
+
+export async function getActiveModel(): Promise<ModelProfile> {
+  return request<ModelProfile>('/api/v1/models/active')
+}
+
+export async function setActiveModel(modelId: string): Promise<{ model_id: string; previous_model_id: string; message: string }> {
+  return request<any>('/api/v1/models/active', {
+    method: 'POST',
+    body: JSON.stringify({ model_id: modelId }),
+  })
+}
+
 // ── Chat ──────────────────────────────────────────────────────────────────────
 import type { ChatSession, ChatSessionDetail, ChatStreamEvent } from './types'
 

@@ -257,6 +257,31 @@ export interface ApprovalDecision {
   reason?: string
 }
 
+// ── Models ────────────────────────────────────────────────────────────────────
+
+export interface ModelCapabilities {
+  completion: boolean
+  vision: boolean
+  audio: boolean
+  tools: boolean
+  thinking: boolean
+  streaming: boolean
+  structured_output: boolean
+  context_window: number
+  parameter_size?: string | null
+  quantization?: string | null
+}
+
+export interface ModelProfile {
+  model_id: string
+  display_name: string
+  provider: string
+  capabilities: ModelCapabilities
+  size_bytes?: number | null
+  digest?: string | null
+  is_active: boolean
+}
+
 // ── Chat ──────────────────────────────────────────────────────────────────────
 
 export interface ChatSession {

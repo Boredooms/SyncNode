@@ -157,17 +157,20 @@ class SyncNodeOrchestrator:
             default_num_gpu=settings.syncnode_gpu_layers,
             default_keep_alive=settings.syncnode_keep_alive,
         )
+        # Use runtime-switchable model (can be hot-swapped via POST /api/v1/models/active)
+        from syncnode_backend.api.v1.models import get_active_model_id
+        active_model = get_active_model_id()
         gateway = ModelGateway(
             adapter=adapter,
-            model_id=settings.syncnode_model_id,
+            model_id=active_model,
             max_repair=settings.syncnode_model_repair_attempts,
         )
 
         self._goal = goal
         try:
             await self._update_run_status("running")
-            await self._emit_event("run.created", {"goal": goal, "model_id": settings.syncnode_model_id})
-            logger.info(f"[RUN] accepted — run_id={self.run_id}")
+            await self._emit_event("run.created", {"goal": goal, "model_id": active_model})
+            logger.info(f"[RUN] accepted — run_id={self.run_id} model={active_model}")
 
             # Run-scoped artifact registry (clean, isolated workspace per run).
             from syncnode_backend.artifacts.registry import RunArtifactRegistry
@@ -1350,25 +1353,66 @@ class SyncNodeOrchestrator:
 
         # windows_search: if it looks like an "open this document" step,
         # inject the file_path so it opens directly without the Search UI.
+        # Priority 1: use same-run artifacts (most accurate)
+        # Priority 2: scan workspace on disk for a matching filename (cross-run)
         if step.action == "computer.windows_search" and not inputs.get("file_path"):
             query_low = str(inputs.get("query", "")).lower()
-            # Detect intent: searching for Word+doc → inject doc_path
+            query_raw = str(inputs.get("query", ""))
             _search_art_map = [
                 (["word", "winword", ".docx", "report", "document"], ["doc_path", "word_path"]),
                 (["excel", "xlsx", "spreadsheet", "workbook", "data"], ["excel_path"]),
                 (["powerpoint", "pptx", "presentation", "slides", "deck"], ["powerpoint_path"]),
             ]
+            injected = False
             for keywords, art_keys in _search_art_map:
                 if any(k in query_low for k in keywords):
+                    # Priority 1: same-run artifact
                     for ak in art_keys:
                         art_path = self._artifacts.get(ak)
                         if art_path:
                             from syncnode_backend.documents.tools import _safe_path
                             resolved = str(_safe_path(art_path).resolve())
                             inputs["file_path"] = resolved
-                            logger.info("[FLOW] injected file_path into windows_search %s → %s",
+                            logger.info("[FLOW] injected same-run file_path into windows_search %s → %s",
                                         step.step_key, resolved)
+                            injected = True
                             break
+                    if injected:
+                        break
+                    # Priority 2: scan workspace for a file matching the query
+                    # (handles "open the word doc you created" as a new run)
+                    try:
+                        from syncnode_backend.config.settings import settings as _s
+                        import glob as _glob
+                        ext_map = {
+                            ".docx": ["doc_path", "word_path"],
+                            ".xlsx": ["excel_path"],
+                            ".pptx": ["powerpoint_path"],
+                        }
+                        exts = [".docx"] if "word" in query_low or ".docx" in query_low else \
+                               [".xlsx"] if "excel" in query_low or ".xlsx" in query_low else \
+                               [".pptx"] if "powerpoint" in query_low or ".pptx" in query_low else \
+                               [".docx", ".xlsx", ".pptx"]
+                        workspace = str(_s.syncnode_workspace_root)
+                        candidates = []
+                        for ext in exts:
+                            candidates.extend(_glob.glob(f"{workspace}/**/*{ext}", recursive=True))
+                        if candidates:
+                            # Prefer filename match over recency
+                            q_clean = query_raw.lower().replace(" ", "_")
+                            scored = []
+                            for c in candidates:
+                                fname = Path(c).stem.lower()
+                                score = sum(1 for w in q_clean.split("_") if w and w in fname)
+                                import os as _os
+                                scored.append((score, _os.path.getmtime(c), c))
+                            scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+                            best = scored[0][2]
+                            inputs["file_path"] = best
+                            logger.info("[FLOW] cross-run workspace scan injected file_path %s → %s",
+                                        step.step_key, best)
+                    except Exception as _scan_exc:
+                        logger.debug("[FLOW] workspace scan failed (non-fatal): %s", _scan_exc)
                     break
 
         # Browser attach step consumes the run's produced artifacts. Attach ALL
@@ -1456,6 +1500,28 @@ class SyncNodeOrchestrator:
             content = tool_result.get("content")
             if isinstance(content, str) and content.strip():
                 self._artifacts["content"] = content
+
+        # Capture fs_search result — the first found file becomes available for
+        # the subsequent windows_search/launch_app open step.
+        if step.action == "system.fs_search":
+            found = tool_result.get("found", [])
+            if found:
+                first_path = found[0].get("path") if isinstance(found[0], dict) else str(found[0])
+                if first_path:
+                    from pathlib import Path as _P
+                    fp = _P(first_path)
+                    ext = fp.suffix.lower()
+                    if ext == ".docx":
+                        self._artifacts["doc_path"] = first_path
+                        self._artifacts["word_path"] = first_path
+                    elif ext == ".xlsx":
+                        self._artifacts["excel_path"] = first_path
+                    elif ext == ".pptx":
+                        self._artifacts["powerpoint_path"] = first_path
+                    # Generic — always store so windows_search injection can find it
+                    self._artifacts["found_file_path"] = first_path
+                    logger.info("[FLOW] fs_search captured path for open step → %s", first_path)
+
         # Register office artifacts (run-scoped, typed).
         create_kind = {
             "document.create_docx": "word",

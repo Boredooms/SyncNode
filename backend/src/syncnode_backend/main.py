@@ -81,7 +81,7 @@ def create_app() -> FastAPI:
 
     # Register API routers
     from syncnode_backend.api.v1 import (
-        runs, health, events, knowledge, tools, learning, chat,
+        runs, health, events, knowledge, tools, learning, chat, models, documents,
     )
     app.include_router(health.router, tags=["health"])
     app.include_router(runs.router, prefix="/api/v1", tags=["runs"])
@@ -90,6 +90,8 @@ def create_app() -> FastAPI:
     app.include_router(tools.router, prefix="/api/v1", tags=["tools"])
     app.include_router(learning.router, prefix="/api/v1", tags=["learning"])
     app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
+    app.include_router(models.router, prefix="/api/v1", tags=["models"])
+    app.include_router(documents.router, prefix="/api/v1", tags=["documents"])
 
     @app.exception_handler(Exception)
     async def generic_handler(request, exc):
