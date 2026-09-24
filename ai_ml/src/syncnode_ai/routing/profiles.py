@@ -107,9 +107,9 @@ _DEFAULT_PROFILES: dict[TaskClass, InferenceProfile] = {
     TaskClass.FAST_STRUCTURED: InferenceProfile(
         name="fast_structured",
         task_class=TaskClass.FAST_STRUCTURED,
-        num_ctx=8192,
+        num_ctx=12288,
         num_gpu=99,
-        max_output_tokens=1024,
+        max_output_tokens=2048,
         temperature=0.0,
         top_p=1.0,
         keep_alive="30m",
@@ -131,17 +131,23 @@ _DEFAULT_PROFILES: dict[TaskClass, InferenceProfile] = {
     ),
     # ExecutionPlan / DAG generation. Larger context for intent + tool schemas,
     # larger output budget for the plan, deterministic.
+    # num_ctx=16384: complex multi-doc+email goals with full system prompt,
+    # schema hint, and enriched intent JSON can exceed 8192 tokens. 16384 keeps
+    # the model GPU-resident on 4GB VRAM at Q4_K_M (measured stable).
+    # max_output_tokens=6144: a 10-step plan with full postconditions, inputs,
+    # and retry_policy JSON is ~4000-5000 tokens. 4096 was too tight for goals
+    # like "create 3 docs + open Word + compose Gmail + attach + pause".
     TaskClass.PLANNER: InferenceProfile(
         name="planner",
         task_class=TaskClass.PLANNER,
-        num_ctx=8192,
+        num_ctx=16384,
         num_gpu=99,
-        max_output_tokens=4096,
+        max_output_tokens=6144,
         temperature=0.0,
         top_p=1.0,
         keep_alive="30m",
         thinking=False,
-        timeout_seconds=180,
+        timeout_seconds=240,
     ),
     # Vision / screenshot interpretation. Image tokens dominate prompt-eval, so
     # give a bit more context; keep output modest.
