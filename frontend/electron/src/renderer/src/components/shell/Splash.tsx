@@ -171,6 +171,7 @@ export function Splash({ onComplete }: SplashProps) {
   }, [phase, checks])
 
   const allReady  = Object.values(checks).every((s) => s === 'ready')
+  // Core = runtime + model. RAG/knowledge is supplementary — degraded only if core fails.
   const coreReady = checks.runtime === 'ready' && checks.model === 'ready'
 
   return (

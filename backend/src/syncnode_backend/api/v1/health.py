@@ -64,9 +64,8 @@ async def health_readiness() -> JSONResponse:
 
     # RAG
     try:
-        from syncnode_backend.config.settings import settings as s
-        import chromadb
-        client = chromadb.PersistentClient(path=s.chroma_persist_dir)
+        from syncnode_backend.health.chroma_client import get_chroma_client
+        client = get_chroma_client()
         cols = client.list_collections()
         checks["rag"] = {"status": "ok", "collections": len(cols)}
     except Exception as exc:
@@ -122,8 +121,8 @@ async def health_database() -> dict[str, Any]:
 @router.get("/health/rag")
 async def health_rag() -> dict[str, Any]:
     try:
-        import chromadb
-        client = chromadb.PersistentClient(path=settings.chroma_persist_dir)
+        from syncnode_backend.health.chroma_client import get_chroma_client
+        client = get_chroma_client()
         cols = client.list_collections()
         return {
             "status": "ok",

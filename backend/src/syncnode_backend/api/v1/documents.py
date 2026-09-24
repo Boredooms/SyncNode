@@ -256,13 +256,9 @@ async def _ingest_to_chroma(
     Returns: (chunk_count, collection_name, already_existed)
     """
     from syncnode_backend.config.settings import settings
-    import chromadb
-    from chromadb.config import Settings as ChromaSettings
+    from syncnode_backend.health.chroma_client import get_chroma_client
 
-    client = chromadb.PersistentClient(
-        path=settings.chroma_persist_dir,
-        settings=ChromaSettings(anonymized_telemetry=False),
-    )
+    client = get_chroma_client()
     collection_name = settings.syncnode_rag_collection
 
     # Check if this doc already exists (by sha256)
@@ -475,19 +471,14 @@ async def upload_and_ingest(
 async def rag_status():
     """Return ChromaDB collection stats."""
     from syncnode_backend.config.settings import settings
+    from syncnode_backend.health.chroma_client import get_chroma_client
     try:
-        import chromadb
-        from chromadb.config import Settings as ChromaSettings
-        client = chromadb.PersistentClient(
-            path=settings.chroma_persist_dir,
-            settings=ChromaSettings(anonymized_telemetry=False),
-        )
+        client = get_chroma_client()
         collection_name = settings.syncnode_rag_collection
         try:
             col = client.get_collection(collection_name)
             all_items = col.get()
             chunk_count = len(all_items.get("ids", []))
-            # Count unique doc_ids
             doc_ids = set()
             for meta in (all_items.get("metadatas") or []):
                 if meta and meta.get("doc_id"):
