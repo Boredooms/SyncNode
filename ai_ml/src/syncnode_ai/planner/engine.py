@@ -59,32 +59,37 @@ Only launch_app as a fallback. Verify an application with assertion_type
 step that launches it — never before.
 
 For LIVE document editing (open app → type → save):
-  a. computer.windows_search to open the app
-  b. computer.launch_app if needed (e.g. executable="winword", args=["<file_path>"])
-  c. computer.uia_type to type content into the app window
-     inputs: {"text": "<content>", "window_title": "<partial window title>", "clear_first": true}
-  d. computer.key_press to save: inputs: {"keys": "{Ctrl}s"}
-  e. computer.key_press to close if needed: inputs: {"keys": "{Alt}{F4}"}
+  The orchestrator AUTOMATICALLY injects the correct file path into launch_app.
+  Just set executable and leave args empty — the file opens automatically.
+  a. computer.launch_app (computer) -> application_running
+     inputs: {"executable": "winword"}   ← opens Word WITH the .docx auto-injected
+     inputs: {"executable": "excel"}     ← opens Excel WITH the .xlsx auto-injected
+     inputs: {"executable": "powerpnt"}  ← opens PowerPoint WITH the .pptx auto-injected
+  b. computer.uia_type to type content into the window
+     inputs: {"text": "<content>", "window_title": "Word", "clear_first": false}
+  c. computer.key_press to save: inputs: {"keys": "{Ctrl}s"}
+  d. computer.key_press to close: inputs: {"keys": "{Alt}{F4}"}
 
-For a multi-document + email workflow, a good plan is:
-1. writer.generate_paragraph (writer)    -> content_generated
-2. document.create_docx (document)       -> file_exists      (inputs: {} — path is auto-scoped)
-3. excel.create (office)                 -> file_exists      (inputs: {"rows": [["Metric","Value"],["Docs",3]]})
-4. powerpoint.create (office)            -> file_exists      (inputs: {"title": "SyncNode"})
-5. computer.windows_search (computer)    -> search_result_found  (inputs: {"query": "Microsoft Word", "open_result": true})
-6. computer.launch_app (computer)        -> application_running  (inputs: {"executable": "winword"})
-7. computer.uia_type (computer)          -> content_typed (type the generated paragraph into Word)
+  DO NOT use computer.windows_search to open a specific file — it opens the app
+  without the file. Use computer.launch_app with executable only (path auto-filled).
+
+For a multi-document + email workflow, the CORRECT plan is:
+1. writer.generate_paragraph (writer)     -> content_generated
+2. document.create_docx (document)        -> file_exists   (path auto-scoped, leave inputs={})
+3. excel.create (office)                  -> file_exists   (inputs: {"rows": [["Category","Value","Notes"],["Automation",95,"pass"]]})
+4. powerpoint.create (office)             -> file_exists   (inputs: {"title": "SyncNode Demo", "slides": [{"title":"Metrics","body":"95% accuracy"},{"title":"Next Steps","body":"Deploy to prod"}]})
+5. computer.launch_app (computer)         -> application_running (inputs: {"executable": "winword"} — orchestrator injects .docx path)
+6. computer.uia_type (computer)           -> content_typed (type into Word window)
    inputs: {"text": "<paragraph>", "window_title": "Word", "clear_first": false}
-8. computer.key_press (computer)         -> file_saved (save the document)
-   inputs: {"keys": "{Ctrl}s"}
-9. browser.navigate (browser)            -> page_loaded
-   CRITICAL: embed ALL email fields directly in the URL using Gmail compose params:
+7. computer.key_press (computer)          -> file_saved    (inputs: {"keys": "{Ctrl}s"})
+8. browser.navigate (browser)             -> page_loaded
+   CRITICAL: embed ALL email fields in the URL:
    url = "https://mail.google.com/mail/u/0/?view=cm&fs=1&to=<RECIPIENT>&su=<SUBJECT>&body=<BODY>"
-   URL-encode spaces as + or %20. Example:
-   "https://mail.google.com/mail/u/0/?view=cm&fs=1&to=demo@syncnode.ai&su=Q4+Package&body=Please+find+attached"
-   The compose fixture pre-fills To/Subject/Body from these URL params — DO NOT add browser.type steps.
-10. browser.attach_file (browser)        -> attachment_present   (inputs: {} — orchestrator injects all artifacts)
-11. requires_approval: true on a final step (do NOT add browser.click for send)
+   URL-encode spaces as +. Example:
+   "https://mail.google.com/mail/u/0/?view=cm&fs=1&to=demo@syncnode.ai&su=Q4+Package&body=Hi+Team"
+   The compose fixture pre-fills To/Subject/Body — NO browser.type steps needed.
+9. browser.attach_file (browser)          -> attachment_present (inputs: {} — all artifacts auto-attached)
+10. workflow.pause (supervisor)           -> requires_approval: true  (NEVER add browser.click/send)
 
 CRITICAL RULES:
 - NEVER use a tool not in the list above. Unknown tools are rejected and fail the run.

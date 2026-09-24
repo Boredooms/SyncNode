@@ -171,8 +171,14 @@ CAPABILITIES:
 - Read environment variables (system.env_get)
 - Read Windows registry (system.registry_get)
 - Create Word, Excel, PowerPoint documents (document.* / excel.* / powerpoint.*)
+- Open files IN their app: use computer.launch_app with executable only — the system
+  auto-injects the file path. Examples:
+    computer.launch_app(executable="winword")   → opens .docx in Word
+    computer.launch_app(executable="excel")     → opens .xlsx in Excel  
+    computer.launch_app(executable="powerpnt")  → opens .pptx in PowerPoint
+  DO NOT use windows_search to open a specific document — it won't pass the file path.
 - Control Windows apps via UI Automation (computer.uia_type / computer.uia_click / computer.key_press)
-- Search Windows and open apps (computer.windows_search / computer.launch_app)
+- Search Windows taskbar for apps (computer.windows_search) — only for launching apps, not opening specific files
 - Control Chromium browser (browser.*)
 
 SAFETY RAILS (built into the tools — you don't need to worry about these):

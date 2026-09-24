@@ -1315,11 +1315,61 @@ class SyncNodeOrchestrator:
             logger.info("[FLOW] auto-filled output_path for screenshot step %s -> %s",
                         step.step_key, inputs["output_path"])
             step.inputs = inputs
-        if doc_path and step.action == "computer.launch_app":
-            if not inputs.get("args"):
-                from syncnode_backend.documents.tools import _safe_path
-                inputs["args"] = [str(_safe_path(doc_path).resolve())]
-                logger.info(f"[FLOW] injected document path as launch arg into {step.step_key}")
+        # Launching the editor should open the created document — pass its
+        # absolute path as a launch argument when none was provided.
+        # Covers Word (doc_path), Excel (excel_path) and PowerPoint (powerpoint_path).
+        _launch_path_map = {
+            "computer.launch_app": {
+                "word":       ["doc_path", "word_path"],
+                "winword":    ["doc_path", "word_path"],
+                "winword.exe":["doc_path", "word_path"],
+                "excel":      ["excel_path"],
+                "excel.exe":  ["excel_path"],
+                "powerpoint": ["powerpoint_path"],
+                "powerpnt":   ["powerpoint_path"],
+                "powerpnt.exe":["powerpoint_path"],
+            }
+        }
+        if step.action == "computer.launch_app" and not inputs.get("args"):
+            exe_key = str(inputs.get("executable", "")).lower().strip()
+            # If executable is empty default is word
+            if not exe_key:
+                exe_key = "word"
+            artifact_keys = _launch_path_map["computer.launch_app"].get(exe_key, [])
+            if not artifact_keys:
+                # Generic fallback — any file: try doc then excel then pptx
+                artifact_keys = ["doc_path", "word_path", "excel_path", "powerpoint_path"]
+            for ak in artifact_keys:
+                art_path = self._artifacts.get(ak)
+                if art_path:
+                    from syncnode_backend.documents.tools import _safe_path
+                    inputs["args"] = [str(_safe_path(art_path).resolve())]
+                    logger.info("[FLOW] injected %s path as launch arg into %s → %s",
+                                ak, step.step_key, inputs["args"][0])
+                    break
+
+        # windows_search: if it looks like an "open this document" step,
+        # inject the file_path so it opens directly without the Search UI.
+        if step.action == "computer.windows_search" and not inputs.get("file_path"):
+            query_low = str(inputs.get("query", "")).lower()
+            # Detect intent: searching for Word+doc → inject doc_path
+            _search_art_map = [
+                (["word", "winword", ".docx", "report", "document"], ["doc_path", "word_path"]),
+                (["excel", "xlsx", "spreadsheet", "workbook", "data"], ["excel_path"]),
+                (["powerpoint", "pptx", "presentation", "slides", "deck"], ["powerpoint_path"]),
+            ]
+            for keywords, art_keys in _search_art_map:
+                if any(k in query_low for k in keywords):
+                    for ak in art_keys:
+                        art_path = self._artifacts.get(ak)
+                        if art_path:
+                            from syncnode_backend.documents.tools import _safe_path
+                            resolved = str(_safe_path(art_path).resolve())
+                            inputs["file_path"] = resolved
+                            logger.info("[FLOW] injected file_path into windows_search %s → %s",
+                                        step.step_key, resolved)
+                            break
+                    break
 
         # Browser attach step consumes the run's produced artifacts. Attach ALL
         # artifacts created during this run (Word + Excel + PowerPoint), by their

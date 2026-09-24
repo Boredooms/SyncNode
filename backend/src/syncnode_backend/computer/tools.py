@@ -69,27 +69,48 @@ async def tool_computer_screenshot(
 
 
 async def tool_computer_windows_search(query: str, open_result: bool = True,
-                                       wait_ms: int = 2500) -> dict[str, Any]:
+                                       wait_ms: int = 2500,
+                                       file_path: Optional[str] = None) -> dict[str, Any]:
     """Open Windows Search, type a query, observe results, optionally open the top hit.
 
-    Uses the Windows Search UI (Win key). Returns whether a matching result was
-    observed. This proves SyncNode can operate the desktop shell rather than
-    invoking a known executable path directly.
+    If `file_path` is supplied and the file exists, it is opened directly in its
+    default application (e.g. .docx → Word, .xlsx → Excel, .pptx → PowerPoint)
+    WITHOUT going through the Search UI. This is faster and more reliable.
+
+    Uses the Windows Search UI (Win key) when file_path is not given.
     """
+    # ── Fast path: open file directly if path is given ───────────────────────
+    if file_path:
+        from pathlib import Path as _P
+        p = _P(file_path).expanduser().resolve()
+        if p.exists():
+            import subprocess as _sp
+            try:
+                _sp.Popen(["cmd", "/c", "start", "", str(p)], shell=False)
+                import time as _t; _t.sleep(wait_ms / 1000.0)
+                logger.info("[SEARCH] opened file directly: %s", p)
+                return {
+                    "opened_search": True, "query": query,
+                    "result_found": True, "matched_name": p.name,
+                    "opened_result": True, "file_path": str(p),
+                    "method": "direct_open",
+                }
+            except Exception as exc:
+                logger.warning("[SEARCH] direct open failed, falling back to search: %s", exc)
+        # file not found — fall through to normal search
+
+    # ── Normal Windows Search path ────────────────────────────────────────────
     try:
         import uiautomation as auto
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return {"opened_search": False, "error": f"uiautomation unavailable: {exc}"}
 
     try:
-        # Open the search UI. Win+S opens Search directly on Windows 10/11.
         auto.SendKeys("{Win}s", waitTime=0.5)
         time.sleep(1.0)
-        # Type the query.
         auto.SendKeys(query, waitTime=0.05)
         time.sleep(wait_ms / 1000.0)
 
-        # Observe: look for a top-level element whose name contains the query.
         found = False
         matched_name = ""
         root = auto.GetRootControl()
@@ -114,19 +135,18 @@ async def tool_computer_windows_search(query: str, open_result: bool = True,
 
         opened = False
         if open_result:
-            # Enter launches the highlighted top result.
             auto.SendKeys("{Enter}", waitTime=0.2)
             time.sleep(wait_ms / 1000.0)
             opened = True
 
         return {
-            "opened_search": True,
-            "query": query,
-            "result_found": found or opened,  # Enter opens the best match
+            "opened_search": True, "query": query,
+            "result_found": found or opened,
             "matched_name": matched_name,
             "opened_result": opened,
+            "method": "windows_search",
         }
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return {"opened_search": False, "query": query, "error": str(exc)}
 
 
@@ -516,10 +536,16 @@ def register_computer_tools(registry) -> None:
         ToolDefinition(
             key="computer.windows_search",
             name="Windows Search",
-            version=1,
-            description="Open Windows Search, type a query, observe results, optionally open the top result",
-            input_schema={"query": "str", "open_result": "bool?", "wait_ms": "int?"},
-            output_schema={"opened_search": "bool", "result_found": "bool"},
+            version=2,
+            description=(
+                "Search Windows taskbar for an app or open a file directly. "
+                "For opening a specific file in its app (e.g. open Q4_Report.docx in Word): "
+                "pass file_path=<absolute_path> — this opens it directly without the Search UI. "
+                "For finding and launching an app by name: pass query='Microsoft Word'."
+            ),
+            input_schema={"query": "str", "open_result": "bool?", "wait_ms": "int?",
+                          "file_path": "str?"},
+            output_schema={"opened_search": "bool", "result_found": "bool", "method": "str"},
             capabilities=["window_management", "process_launch"],
             risk_class="medium",
             side_effect_type="REVERSIBLE_LOCAL",
@@ -530,7 +556,9 @@ def register_computer_tools(registry) -> None:
             drop_decorative_args=True,
             arg_aliases={"search": "query", "text": "query", "term": "query",
                          "app_name": "query", "application": "query", "app": "query",
-                         "open": "open_result", "launch": "open_result"},
+                         "open": "open_result", "launch": "open_result",
+                         "path": "file_path", "document_path": "file_path",
+                         "document": "file_path", "filepath": "file_path"},
         ),
         ToolDefinition(
             key="computer.launch_app",
