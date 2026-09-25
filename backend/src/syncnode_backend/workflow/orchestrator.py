@@ -1426,13 +1426,13 @@ class SyncNodeOrchestrator:
         }
         if step.action == "computer.launch_app" and not inputs.get("args"):
             exe_key = str(inputs.get("executable", "")).lower().strip()
-            # If executable is empty default is word
             if not exe_key:
                 exe_key = "word"
             artifact_keys = _launch_path_map["computer.launch_app"].get(exe_key, [])
             if not artifact_keys:
-                # Generic fallback — any file: try doc then excel then pptx
                 artifact_keys = ["doc_path", "word_path", "excel_path", "powerpoint_path"]
+
+            # Priority 1: same-run artifact dict
             for ak in artifact_keys:
                 art_path = self._artifacts.get(ak)
                 if art_path:
@@ -1441,6 +1441,28 @@ class SyncNodeOrchestrator:
                     logger.info("[FLOW] injected %s path as launch arg into %s → %s",
                                 ak, step.step_key, inputs["args"][0])
                     break
+
+            # Priority 2: workspace scan when artifact not captured yet (parallel wave race)
+            if not inputs.get("args") and self._artifacts_reg is not None:
+                try:
+                    import glob as _glob
+                    _ext_map = {
+                        "word": "*.docx", "winword": "*.docx", "winword.exe": "*.docx",
+                        "excel": "*.xlsx", "excel.exe": "*.xlsx",
+                        "powerpoint": "*.pptx", "powerpnt": "*.pptx", "powerpnt.exe": "*.pptx",
+                    }
+                    pattern = _ext_map.get(exe_key, "*.docx")
+                    run_dir = str(self._artifacts_reg.run_dir)
+                    matches = sorted(
+                        _glob.glob(f"{run_dir}/**/{pattern}", recursive=True),
+                        key=lambda x: Path(x).stat().st_mtime, reverse=True,
+                    )
+                    if matches:
+                        inputs["args"] = [str(Path(matches[0]).resolve())]
+                        logger.info("[FLOW] workspace-scan injected launch arg into %s → %s",
+                                    step.step_key, inputs["args"][0])
+                except Exception as _scan_exc:
+                    logger.debug("[FLOW] launch_app workspace scan failed: %s", _scan_exc)
 
         # windows_search: if it looks like an "open this document" step,
         # inject the file_path so it opens directly without the Search UI.
