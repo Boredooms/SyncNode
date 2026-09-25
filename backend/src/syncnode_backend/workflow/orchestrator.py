@@ -540,20 +540,13 @@ class SyncNodeOrchestrator:
         for step in plan.steps:
             action = step.action or ""
 
-            # Hard rule: nothing after an EXPLICIT workflow.pause control action.
-            # ONLY workflow.pause (the control action) terminates the plan.
-            # requires_approval=True on regular tool steps does NOT terminate —
-            # those steps execute and then raise ApprovalRequiredSignal themselves.
             if pause_seen:
                 dropped.append(f"{step.step_key}({action}) [after-pause]")
                 continue
 
-            # Override planner: compose/attach actions are never approval gates
             if action in _NEVER_GATE:
                 step.requires_approval = False
 
-            # Mark pause only after we've processed the step's NEVER_GATE override,
-            # and ONLY for the explicit workflow.pause control action.
             if action == "workflow.pause":
                 pause_seen = True
 
@@ -563,12 +556,35 @@ class SyncNodeOrchestrator:
                 valid.append(step)
             else:
                 dropped.append(f"{step.step_key}({action})")
+
+        # Enforce: computer.launch_app (word/excel/pptx) must depend on the
+        # corresponding create step so it never runs in the same parallel wave.
+        _app_to_create = {
+            "word": "document.create_docx", "winword": "document.create_docx",
+            "winword.exe": "document.create_docx",
+            "excel": "excel.create", "excel.exe": "excel.create",
+            "powerpoint": "powerpoint.create", "powerpnt": "powerpoint.create",
+            "powerpnt.exe": "powerpoint.create",
+        }
+        for step in valid:
+            if step.action == "computer.launch_app":
+                exe = str((step.inputs or {}).get("executable", "")).lower().strip() or "word"
+                required_create = _app_to_create.get(exe)
+                if required_create:
+                    # Find the create step key
+                    for s in valid:
+                        if s.action == required_create and s.step_key not in (step.dependencies or []):
+                            if not hasattr(step, 'dependencies') or step.dependencies is None:
+                                step.dependencies = []
+                            step.dependencies.append(s.step_key)
+                            logger.info("[PLAN] enforced dependency: %s depends on %s",
+                                        step.step_key, s.step_key)
+                            break
+
         if dropped:
             logger.warning(f"[PLAN] dropped {len(dropped)} steps with unknown actions: {dropped}")
         plan.steps = valid
         plan.total_steps = len(valid)
-        if dropped:
-            logger.warning(f"[PLAN] dropped {len(dropped)} steps with unknown actions: {dropped}")
         plan.steps = valid
         plan.total_steps = len(valid)
 
@@ -1067,7 +1083,9 @@ class SyncNodeOrchestrator:
                 email_body_goal = bm.group(1).strip()
 
         writer_content = self._artifacts.get("content", "")
-        body_text = email_body_goal or text_val or writer_content
+        # NEVER use writer_content as email body — it belongs in the Word document.
+        # Email body comes ONLY from enricher_body, gmail URL params, or goal regex.
+        body_text = email_body_goal or text_val
 
         # ── Detect collapsed step (fills all fields) ───────────────────────
         is_collapsed = (
@@ -1122,9 +1140,9 @@ class SyncNodeOrchestrator:
             elif text_val and (len(text_val) > 40 or "\n" in text_val):
                 inputs["selector"] = "body"
             elif any(k in step_key_low for k in ("detail", "compose", "draft", "content")):
-                if not text_val or self._looks_like_field_ref(text_val):
-                    if writer_content:
-                        inputs["text"] = writer_content
+                # Never inject writer_content into email body — it's the Word doc paragraph
+                if email_body_goal and (not text_val or self._looks_like_field_ref(text_val)):
+                    inputs["text"] = email_body_goal
                 inputs["selector"] = "body"
             elif text_val:
                 inputs["selector"] = "body"
@@ -1132,15 +1150,11 @@ class SyncNodeOrchestrator:
 
         if is_body:
             inputs["selector"] = "body"
-            # Only use writer content if the step has NO explicit text — never
-            # overwrite a real goal body like "Please find the attached document"
-            # with the full writer paragraph.
+            # Only use email body from goal/enricher — never the writer paragraph
             if not text_val or self._is_placeholder(text_val) or self._looks_like_field_ref(text_val):
                 if email_body_goal:
                     inputs["text"] = email_body_goal
                     logger.info("[FLOW] injected goal body text for %s", step.step_key)
-                elif writer_content:
-                    inputs["text"] = writer_content
                     logger.info("[FLOW] fallback: injected writer content as email body in %s", step.step_key)
 
         if is_subject:
