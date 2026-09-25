@@ -545,11 +545,25 @@ async def tool_computer_key_press(
       keys="{Ctrl}a"   → Ctrl+A (Select All)
       keys="{Ctrl}z"   → Ctrl+Z (Undo)
       keys="{Enter}"   → Enter key
-      keys="{Alt}{F4}" → Alt+F4 (Close)
+      keys="{Alt}{F4}" → Alt+F4 (Close focused app)
       keys="{Ctrl}{Shift}s" → Ctrl+Shift+S (Save As)
 
-    Uses uiautomation SendKeys format.
+    BLOCKED: {Ctrl}w — this closes browser tabs and the Electron app.
+    Use computer.uia_click to close Office windows instead.
     """
+    # Safety: {Ctrl}w closes browser tabs and Electron windows — block it.
+    keys_lower = keys.lower().replace(" ", "")
+    if "{ctrl}w" in keys_lower or "^w" in keys_lower:
+        return {
+            "sent": False,
+            "keys": keys,
+            "blocked": True,
+            "error": (
+                "{Ctrl}w is blocked — it closes browser tabs and the Electron app. "
+                "To close an Office window use: computer.uia_click(window_title='...', name='Close') "
+                "or computer.key_press(keys='{Alt}{F4}') after focusing the Office window."
+            ),
+        }
     try:
         import uiautomation as auto
         auto.SendKeys(keys, waitTime=wait_ms / 1000.0)

@@ -210,14 +210,16 @@ CAPABILITIES:
 
 CRITICAL — editing Excel/Word files that are currently OPEN:
   openpyxl/python-docx cannot write a file while Office has it open (Permission denied).
-  Before calling excel.write_range or excel.write_cell on an open file, you MUST close it first:
-    computer.key_press(keys="{Ctrl}w")   ← closes the workbook in Excel
-  Then write: excel.write_range(path="...", start_cell="A10", rows=[...])
-  Then re-open: computer.windows_search(query="Battery_Data.xlsx", file_path="...")
-  
+  Before calling excel.write_range or excel.write_cell on an open file, you MUST close it first.
+
+  SAFE WAY to close Excel workbook (does NOT crash other apps):
+    computer.uia_click(window_title="Battery_Data", name="Close")
+    OR: computer.key_press(keys="{Alt}{F4}")   ← closes the focused window ONLY if Excel is focused
+    NEVER use {Ctrl}w — this is a browser/Electron shortcut and will crash the app.
+
   PATTERN for editing an open Excel file:
-    1. computer.key_press(keys="{Ctrl}w") → close workbook
-    2. excel.write_range(path="...", start_cell="A10", rows=[["China", "Export", "LFP"], ...])
+    1. computer.uia_click(window_title="Battery_Data", name="Close") → close workbook
+    2. excel.write_range(path="Battery_Data.xlsx", start_cell="A10", rows=[["China", "Export", "LFP"], ...])
     3. computer.windows_search(query="Battery_Data.xlsx", file_path="<path>") → re-open
 
 - Search Windows taskbar for apps (computer.windows_search with query only, no file_path)

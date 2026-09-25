@@ -738,6 +738,26 @@ class SyncNodeOrchestrator:
             return
 
         # ---- Execute through the ExecutionEngine, with bounded recovery ----
+        # For launch_app (Word/Excel/PowerPoint): wait async for the target file
+        # to exist before proceeding. This handles the parallel-wave race where
+        # create_docx runs in the same wave as launch_word.
+        if step.action == "computer.launch_app" and self._artifacts_reg is not None:
+            exe_key = str((step.inputs or {}).get("executable", "")).lower().strip() or "word"
+            _ext_map2 = {
+                "word": "*.docx", "winword": "*.docx", "winword.exe": "*.docx",
+                "excel": "*.xlsx", "excel.exe": "*.xlsx",
+                "powerpoint": "*.pptx", "powerpnt": "*.pptx", "powerpnt.exe": "*.pptx",
+            }
+            pat = _ext_map2.get(exe_key, "*.docx")
+            if not (step.inputs or {}).get("args"):
+                import glob as _g, asyncio as _aio2
+                run_dir = str(self._artifacts_reg.run_dir)
+                for _ in range(40):  # max 20s async wait
+                    ms = _g.glob(f"{run_dir}/**/{pat}", recursive=True)
+                    if ms:
+                        break
+                    await _aio2.sleep(0.5)
+
         await self._run_step_with_recovery(step, step_id, agent_def, failure_mode)
 
     async def _run_step_with_recovery(self, step, step_id, agent_def, failure_mode: str) -> None:
@@ -1442,16 +1462,15 @@ class SyncNodeOrchestrator:
                                 ak, step.step_key, inputs["args"][0])
                     break
 
-            # Priority 2: workspace scan WITH wait — poll up to 20s for the file
-            # to appear. Handles the parallel-wave race where create_docx and
-            # launch_word are dispatched simultaneously.
-            # NOTE: _resolve_step_inputs is sync — use time.sleep (called before
-            # the actual Popen so blocking here is acceptable; total wait is short
-            # in practice since create_docx takes ~300ms).
+            # Priority 2: workspace scan (single pass, no blocking sleep).
+            # The actual wait-for-file logic is handled in _run_step_with_recovery
+            # which calls _resolve_step_inputs on each retry. If the file doesn't
+            # exist yet, launch_word will proceed with empty args and the step
+            # will fail verification, then recovery will retry after a short delay
+            # at which point the file will exist and this scan will find it.
             if not inputs.get("args") and self._artifacts_reg is not None:
                 try:
                     import glob as _glob
-                    import time as _t
                     _ext_map = {
                         "word": "*.docx", "winword": "*.docx", "winword.exe": "*.docx",
                         "excel": "*.xlsx", "excel.exe": "*.xlsx",
@@ -1459,22 +1478,14 @@ class SyncNodeOrchestrator:
                     }
                     pattern = _ext_map.get(exe_key, "*.docx")
                     run_dir = str(self._artifacts_reg.run_dir)
-
-                    # Poll up to 20s (40 × 0.5s). The docx typically appears
-                    # within 0.5-1s in the parallel wave, so this rarely blocks long.
-                    for _wait_attempt in range(40):
-                        matches = sorted(
-                            _glob.glob(f"{run_dir}/**/{pattern}", recursive=True),
-                            key=lambda x: Path(x).stat().st_mtime, reverse=True,
-                        )
-                        if matches:
-                            inputs["args"] = [str(Path(matches[0]).resolve())]
-                            logger.info("[FLOW] workspace-scan attempt=%d injected launch arg %s → %s",
-                                        _wait_attempt + 1, step.step_key, inputs["args"][0])
-                            break
-                        _t.sleep(0.5)
-                    else:
-                        logger.warning("[FLOW] launch_app: file not found after 20s — launching without file: %s", step.step_key)
+                    matches = sorted(
+                        _glob.glob(f"{run_dir}/**/{pattern}", recursive=True),
+                        key=lambda x: Path(x).stat().st_mtime, reverse=True,
+                    )
+                    if matches:
+                        inputs["args"] = [str(Path(matches[0]).resolve())]
+                        logger.info("[FLOW] workspace-scan injected launch arg %s → %s",
+                                    step.step_key, inputs["args"][0])
                 except Exception as _scan_exc:
                     logger.debug("[FLOW] launch_app workspace scan failed: %s", _scan_exc)
 
