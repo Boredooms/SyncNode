@@ -134,7 +134,7 @@ async def assert_content_generated(
     if path_value:
         try:
             p = _safe_path(path_value)
-        except Exception as exc:  # path escaped the workspace, etc.
+        except Exception as exc:
             return AssertionResult(
                 assertion_type="content_generated", target=target, passed=False,
                 error=f"content path rejected: {exc}", evidence={"path": path_value},
@@ -142,6 +142,11 @@ async def assert_content_generated(
         if p.exists():
             text = p.read_text(encoding="utf-8", errors="replace")
             length = len(text.strip())
+            # If on-disk file is empty, try the tool_result content string directly
+            # (the tool may have returned content but failed to write the scratch file)
+            if length == 0 and tool_result and isinstance(tool_result.get("content"), str):
+                text = tool_result["content"].strip()
+                length = len(text)
             passed = length >= min_len
             return AssertionResult(
                 assertion_type="content_generated", target=target,

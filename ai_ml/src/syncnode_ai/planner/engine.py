@@ -52,6 +52,11 @@ IMPORTANT — use ONLY these real tool actions (unknown tools are rejected):
   system.fs_delete, system.shell, system.process_list, system.process_kill,
   system.clipboard_get, system.clipboard_set, system.env_get, system.registry_get
 
+writer.generate_paragraph ONLY accepts these inputs:
+  {"topic": "<what to write about>"}  ← use topic= always, never content_prompt=
+  NEVER use: content_prompt, writing_prompt, paragraph_prompt, target_document
+  These are DROPPED by the tool registry and will result in empty output.
+
 ═══════════════════════════════════════════════════════════════
 RULE #1 — OPENING AN EXISTING FILE (highest priority rule)
 ═══════════════════════════════════════════════════════════════
