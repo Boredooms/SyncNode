@@ -106,10 +106,19 @@ async def _build_run_context(run_id: str) -> str:
                 lines.append("\nProduced Artifacts (use these exact paths to open/edit files):")
                 for a in artifacts[:10]:
                     v = "✓" if a.verified else "?"
-                    # Show full path so Chat AI can reference it directly
                     full_path = a.path or "—"
                     entry = f"  {v} {a.name} ({a.artifact_type}) → {full_path}"
-                    lines.append(entry[:200])
+                    # For Excel files, inspect the sheet name so Chat knows it
+                    if a.artifact_type == "excel" and a.path:
+                        try:
+                            from openpyxl import load_workbook as _lw
+                            _wb = _lw(a.path, read_only=True)
+                            _sheets = _wb.sheetnames
+                            _wb.close()
+                            entry += f"  [sheets: {', '.join(_sheets)}]"
+                        except Exception:
+                            pass
+                    lines.append(entry[:250])
                 if len(artifacts) > 10:
                     lines.append(f"  … and {len(artifacts) - 10} more")
 
@@ -588,6 +597,55 @@ async def get_run_context_for_session(session_id: str, run_id: str) -> dict:
     return {"session_id": session_id, "run_id": run_id, "context": ctx}
 
 
+def _parse_tool_code_from_text(text: str) -> list[dict]:
+    """Parse <tool_code>funcname(args)</tool_code> or function-call-style text
+    that Gemma sometimes emits instead of proper function call events.
+
+    Returns a list of fake tool_call dicts matching the Ollama format.
+    """
+    import re, json as _json
+    results = []
+
+    # Match <tool_code>tool_name(arg1=val, ...)</tool_code>
+    # Also match excel_write_range(path="...", start_cell="...", rows=[...])
+    pattern = re.compile(
+        r'<tool_code>\s*(\w+)\s*\((.*?)\)\s*</tool_code>',
+        re.DOTALL
+    )
+    for m in pattern.finditer(text):
+        fn_name = m.group(1).strip()
+        args_raw = m.group(2).strip()
+
+        # Try to parse kwargs: key="value" or key=['...'] or key={...}
+        args_dict: dict = {}
+        try:
+            # Wrap in braces and eval-safe parse via json
+            # Convert key=value to "key": value JSON-style
+            json_str = re.sub(
+                r'(\w+)\s*=\s*',
+                r'"\1": ',
+                args_raw
+            )
+            # Replace single quotes with double for JSON
+            json_str = json_str.replace("'", '"')
+            args_dict = _json.loads("{" + json_str + "}")
+        except Exception:
+            # Fallback: extract string args manually
+            kv = re.findall(r'(\w+)\s*=\s*"([^"]*)"', args_raw)
+            for k, v in kv:
+                args_dict[k] = v
+
+        if fn_name and args_dict:
+            results.append({
+                "function": {
+                    "name": fn_name,
+                    "arguments": args_dict,
+                }
+            })
+
+    return results
+
+
 @router.post("/chat/sessions/{session_id}/stream")
 async def chat_stream(session_id: str, req: SendMessageRequest):
     """
@@ -747,7 +805,21 @@ async def chat_stream(session_id: str, req: SendMessageRequest):
                             out_tokens += event.output_tokens
 
                 if not pending_tcs:
-                    break
+                    # Also check if model emitted tool calls as <tool_code> XML text
+                    # (Gemma sometimes writes tool calls as text instead of function events)
+                    if round_text:
+                        parsed_tcs = _parse_tool_code_from_text(round_text)
+                        if parsed_tcs:
+                            # Strip the tool_code XML from the displayed response
+                            import re as _re
+                            clean_text = _re.sub(r'<tool_code>.*?</tool_code>', '', round_text, flags=_re.DOTALL).strip()
+                            if clean_text != round_text:
+                                # Remove the raw tool_code from the stream and replace with clean text
+                                full_response = full_response[:-(len(round_text))] + clean_text
+                                # Re-emit the cleaned text (strip the XML part)
+                            pending_tcs = parsed_tcs
+                    if not pending_tcs:
+                        break
 
                 model_messages.append(Message(role="assistant", content=round_text or ""))
 

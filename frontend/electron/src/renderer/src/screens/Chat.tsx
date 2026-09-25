@@ -146,7 +146,7 @@ function MessageBubble({ msg }: { msg: LocalMessage }) {
               <span>{msg.error}</span>
             </div>
           ) : (
-            <span className="whitespace-pre-wrap">{msg.content}</span>
+            <span className="whitespace-pre-wrap break-words">{msg.content}</span>
           )}
           {msg.streaming && !msg.content && (
             <span className="inline-flex gap-1">
