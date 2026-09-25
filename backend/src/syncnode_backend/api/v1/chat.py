@@ -791,35 +791,43 @@ async def chat_stream(session_id: str, req: SendMessageRequest):
 
                 pending_tcs: list[dict] = []
                 round_text = ""
+                round_deltas: list[str] = []   # buffer deltas — only emit after checking for tool_code
 
                 async with scheduler.model_slot(agent_id="chat"):
                     async for event in gateway.stream(req_obj):
                         if event.event_type == "delta" and event.delta:
                             round_text += event.delta
-                            full_response += event.delta
-                            yield _sse({"type": "delta", "content": event.delta})
+                            round_deltas.append(event.delta)
                         elif event.event_type == "tool_call" and event.tool_call:
                             pending_tcs.append(event.tool_call)
                         elif event.event_type == "done":
                             in_tokens += event.input_tokens
                             out_tokens += event.output_tokens
 
+                # Check for tool_code XML in buffered text BEFORE emitting deltas
+                if not pending_tcs and round_text:
+                    parsed_tcs = _parse_tool_code_from_text(round_text)
+                    if parsed_tcs:
+                        pending_tcs = parsed_tcs
+                        # Strip tool_code XML and only emit clean text
+                        import re as _re2
+                        clean_text = _re2.sub(r'<tool_code>.*?</tool_code>', '', round_text, flags=_re2.DOTALL).strip()
+                        clean_text = _re2.sub(r'\s+', ' ', clean_text).strip()
+                        if clean_text:
+                            full_response += clean_text
+                            yield _sse({"type": "delta", "content": clean_text})
+                        # Don't emit the raw tool_code XML deltas
+                        round_deltas = []
+
+                # Emit buffered deltas (only if no tool_code was found)
+                if round_deltas:
+                    for delta in round_deltas:
+                        full_response += delta
+                        yield _sse({"type": "delta", "content": delta})
+
+                # If no tool calls at all, break the agentic loop
                 if not pending_tcs:
-                    # Also check if model emitted tool calls as <tool_code> XML text
-                    # (Gemma sometimes writes tool calls as text instead of function events)
-                    if round_text:
-                        parsed_tcs = _parse_tool_code_from_text(round_text)
-                        if parsed_tcs:
-                            # Strip the tool_code XML from the displayed response
-                            import re as _re
-                            clean_text = _re.sub(r'<tool_code>.*?</tool_code>', '', round_text, flags=_re.DOTALL).strip()
-                            if clean_text != round_text:
-                                # Remove the raw tool_code from the stream and replace with clean text
-                                full_response = full_response[:-(len(round_text))] + clean_text
-                                # Re-emit the cleaned text (strip the XML part)
-                            pending_tcs = parsed_tcs
-                    if not pending_tcs:
-                        break
+                    break
 
                 model_messages.append(Message(role="assistant", content=round_text or ""))
 

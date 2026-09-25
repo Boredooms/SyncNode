@@ -167,7 +167,7 @@ async def tool_excel_write_cell(path: str, cell: str, value: Any,
         return {"written": False, "error": f"Workbook not found: {p}"}
 
     def _mutate(wb):
-        ws = wb[sheet_name] if sheet_name and sheet_name in wb.sheetnames else wb.active
+        ws = wb[sheet_name] if sheet_name and sheet_name in wb.sheetnames else wb.worksheets[0]
         ws[cell] = value
 
     result = await _write_xlsx_safe(p, _mutate)
@@ -191,7 +191,14 @@ async def tool_excel_write_range(path: str, start_cell: str, rows: list,
     start_col = column_index_from_string(col_letter)
 
     def _mutate(wb):
-        ws = wb[sheet_name] if sheet_name and sheet_name in wb.sheetnames else wb.active
+        # Use provided sheet_name if it exists, else fall back to first sheet
+        # (handles "Sheet1" vs "Specifications" mismatch from model hallucination)
+        if sheet_name and sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+        else:
+            ws = wb.worksheets[0]  # always use first sheet, not just 'active'
+            if sheet_name:
+                logger.info("[EXCEL] sheet '%s' not found, using first sheet '%s'", sheet_name, ws.title)
         for r_offset, row in enumerate(rows or []):
             if not isinstance(row, (list, tuple)):
                 row = [row]
