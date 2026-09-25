@@ -104,7 +104,7 @@ BUILT_IN_AGENTS: list[AgentDefinition] = [
             "presentation_creation", "presentation_modification", "presentation_inspection",
         ],
         allowed_tools=[
-            "excel.create", "excel.write_cell", "excel.read_cell",
+            "excel.create", "excel.write_cell", "excel.write_range", "excel.read_cell",
             "excel.read_range", "excel.inspect",
             "powerpoint.create", "powerpoint.add_slide", "powerpoint.inspect",
         ],

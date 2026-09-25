@@ -125,7 +125,7 @@ class SyncNodeOrchestrator:
                 ):
                     self._artifacts["enricher_recipient"] = enriched_ctx.recipient_email
                 if enriched_ctx.subject and len(enriched_ctx.subject) < 200:
-                    self._artifacts["enricher_subject"] = enriched_ctx.subject
+                    self._artifacts["enricher_subject"] = enriched_ctx.subject.strip('"').strip("'").strip()
                 if enriched_ctx.body_hint:
                     self._artifacts["enricher_body"] = enriched_ctx.body_hint
                 if enriched_ctx.save_filename and _re.search(

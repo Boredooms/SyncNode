@@ -117,17 +117,19 @@ _DEFAULT_PROFILES: dict[TaskClass, InferenceProfile] = {
         timeout_seconds=120,
     ),
     # General reasoning over accumulated context.
+    # Increased max_output_tokens for Chat — conversational responses,
+    # tool result summaries, and multi-step explanations need more room.
     TaskClass.NORMAL_REASONING: InferenceProfile(
         name="normal_reasoning",
         task_class=TaskClass.NORMAL_REASONING,
-        num_ctx=8192,
+        num_ctx=12288,
         num_gpu=99,
-        max_output_tokens=1024,
+        max_output_tokens=3072,
         temperature=0.2,
         top_p=0.9,
         keep_alive="30m",
         thinking=False,
-        timeout_seconds=120,
+        timeout_seconds=180,
     ),
     # ExecutionPlan / DAG generation. Larger context for intent + tool schemas,
     # larger output budget for the plan, deterministic.

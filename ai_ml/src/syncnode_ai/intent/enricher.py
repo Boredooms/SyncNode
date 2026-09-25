@@ -187,8 +187,7 @@ class PromptEnricher:
                 # ── subject: short text, no template phrases ────────────────
                 raw_subj = data.get("subject") or ""
                 if isinstance(raw_subj, str):
-                    s = raw_subj.strip()
-                    # Reject template description strings (contain "if" + "else" or are too long)
+                    s = raw_subj.strip().strip('"').strip("'").strip()
                     if s and len(s) < 200 and not ("if present" in s.lower() or "else empty" in s.lower()):
                         ctx.subject = s
 
@@ -233,10 +232,9 @@ class PromptEnricher:
         if fn:
             ctx.save_filename = fn.group(0)
             ctx.attachment_filename = fn.group(0)
-        sm = re.search(r"subject\s+([^,\.]{3,80})", goal, re.I)
+        sm = re.search(r"subject\s+([^,\.]+)", goal, re.I)
         if sm:
-            ctx.subject = sm.group(1).strip().rstrip(".,;")
-        bm = re.search(r"body\s+([^,]{10,300}?)(?:,\s*(?:attach|stop|send)|$)", goal, re.I)
+            ctx.subject = sm.group(1).strip().rstrip(".,;").strip('"').strip("'")
         if bm:
             ctx.body_hint = bm.group(1).strip()
         ctx.requires_approval = any(

@@ -237,7 +237,7 @@ def _get_chat_tools() -> list[dict]:
     from syncnode_backend.tools.registry import tool_registry
     allowed = {
         "document.create_docx", "document.inspect_docx", "document.read_docx",
-        "excel.create", "excel.write_cell", "excel.read_cell",
+        "excel.create", "excel.write_cell", "excel.write_range", "excel.read_cell",
         "excel.read_range", "excel.inspect",
         "powerpoint.create", "powerpoint.add_slide", "powerpoint.inspect",
         "filesystem.write", "filesystem.find", "filesystem.hash",
@@ -695,7 +695,7 @@ async def chat_stream(session_id: str, req: SendMessageRequest):
             adapter = OllamaAdapter(
                 base_url=settings.ollama_base_url,
                 timeout=float(settings.syncnode_model_timeout),
-                default_num_ctx=settings.syncnode_num_ctx,
+                default_num_ctx=16384,
                 default_num_gpu=settings.syncnode_gpu_layers,
                 default_keep_alive=settings.syncnode_keep_alive,
             )
@@ -713,6 +713,7 @@ async def chat_stream(session_id: str, req: SendMessageRequest):
                     messages=model_messages,
                     tools=gateway_tools,
                     temperature=0.7,
+                    max_tokens=3000,   # generous for conversational + tool result summaries
                     caller="chat",
                 )
 

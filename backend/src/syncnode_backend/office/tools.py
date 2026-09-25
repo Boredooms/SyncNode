@@ -79,44 +79,100 @@ async def tool_excel_create(
     }
 
 
+async def _resolve_xlsx_path(path: str) -> Path:
+    """Resolve an xlsx path — if it's a bare filename, search the workspace."""
+    from syncnode_backend.documents.tools import _safe_path
+    from syncnode_backend.config.settings import settings
+    p = Path(path)
+    # Already absolute and exists — use it directly
+    if p.is_absolute() and p.exists():
+        return _safe_path(path)
+    # Bare filename (e.g. "Battery_Data.xlsx") — scan workspace for it
+    if not p.is_absolute():
+        import glob as _glob
+        workspace = str(settings.syncnode_workspace_root)
+        pattern = f"{workspace}/**/{p.name}"
+        matches = sorted(_glob.glob(pattern, recursive=True),
+                         key=lambda x: Path(x).stat().st_mtime, reverse=True)
+        if matches:
+            logger.info("[EXCEL] resolved bare filename '%s' -> '%s'", path, matches[0])
+            return Path(matches[0])
+    return _safe_path(path)
+
+
 async def tool_excel_write_cell(path: str, cell: str, value: Any,
                                 sheet_name: Optional[str] = None) -> dict[str, Any]:
-    """Write a single cell (e.g. cell="B2") in an existing workbook."""
+    """Write a single cell (e.g. cell="B2") in an existing workbook.
+    Accepts a bare filename — auto-resolves to the most recent match in workspace.
+    """
     from openpyxl import load_workbook
-
-    p = _safe(path)
+    p = await _resolve_xlsx_path(path)
     if not p.exists():
         return {"written": False, "error": f"Workbook not found: {p}"}
     wb = load_workbook(str(p))
-    ws = wb[sheet_name] if sheet_name else wb.active
+    ws = wb[sheet_name] if sheet_name and sheet_name in wb.sheetnames else wb.active
     ws[cell] = value
     wb.save(str(p))
     return {"written": True, "path": str(p), "cell": cell, "sha256": _sha256(p)}
 
 
+async def tool_excel_write_range(path: str, start_cell: str, rows: list,
+                                 sheet_name: Optional[str] = None) -> dict[str, Any]:
+    """Write multiple rows starting at `start_cell` (e.g. start_cell="A10").
+    `rows` is a 2D list — each inner list is one row of values.
+    Accepts a bare filename — auto-resolves to the most recent match in workspace.
+    Useful for appending new rows of data to an existing spreadsheet.
+    """
+    from openpyxl import load_workbook
+    from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
+
+    p = await _resolve_xlsx_path(path)
+    if not p.exists():
+        return {"written": False, "error": f"Workbook not found: {p}"}
+
+    wb = load_workbook(str(p))
+    ws = wb[sheet_name] if sheet_name and sheet_name in wb.sheetnames else wb.active
+
+    col_letter, start_row = coordinate_from_string(start_cell)
+    start_col = column_index_from_string(col_letter)
+
+    written = 0
+    for r_offset, row in enumerate(rows or []):
+        if not isinstance(row, (list, tuple)):
+            row = [row]
+        for c_offset, value in enumerate(row):
+            ws.cell(row=start_row + r_offset, column=start_col + c_offset, value=value)
+            written += 1
+
+    wb.save(str(p))
+    logger.info("[EXCEL] write_range path=%s start=%s rows=%d cells=%d", p, start_cell, len(rows or []), written)
+    return {
+        "written": True, "path": str(p), "start_cell": start_cell,
+        "rows_written": len(rows or []), "cells_written": written, "sha256": _sha256(p),
+    }
+
+
 async def tool_excel_read_cell(path: str, cell: str,
                                sheet_name: Optional[str] = None) -> dict[str, Any]:
-    """Read a single cell value."""
+    """Read a single cell value. Accepts bare filename."""
     from openpyxl import load_workbook
-
-    p = _safe(path)
+    p = await _resolve_xlsx_path(path)
     if not p.exists():
         return {"exists": False, "value": None}
     wb = load_workbook(str(p), data_only=True)
-    ws = wb[sheet_name] if sheet_name else wb.active
+    ws = wb[sheet_name] if sheet_name and sheet_name in wb.sheetnames else wb.active
     return {"exists": True, "path": str(p), "cell": cell, "value": ws[cell].value}
 
 
 async def tool_excel_read_range(path: str, cell_range: str,
                                 sheet_name: Optional[str] = None) -> dict[str, Any]:
-    """Read a rectangular range (e.g. "A1:C3") as a list of rows."""
+    """Read a rectangular range (e.g. "A1:C3") as a list of rows. Accepts bare filename."""
     from openpyxl import load_workbook
-
-    p = _safe(path)
+    p = await _resolve_xlsx_path(path)
     if not p.exists():
         return {"exists": False, "values": []}
     wb = load_workbook(str(p), data_only=True)
-    ws = wb[sheet_name] if sheet_name else wb.active
+    ws = wb[sheet_name] if sheet_name and sheet_name in wb.sheetnames else wb.active
     values = [[c.value for c in row] for row in ws[cell_range]]
     return {"exists": True, "path": str(p), "range": cell_range, "values": values}
 
@@ -282,8 +338,8 @@ def register_office_tools(registry) -> None:
             },
         ),
         ToolDefinition(
-            key="excel.write_cell", name="Write Cell", version=1,
-            description="Write a value to a single cell (e.g. B2)",
+            key="excel.write_cell", name="Write Cell", version=2,
+            description="Write a value to a single cell (e.g. B2). Accepts bare filename — auto-resolves path in workspace.",
             input_schema={"path": "str", "cell": "str", "value": "any", "sheet_name": "str?"},
             output_schema={"written": "bool"},
             capabilities=["spreadsheet_modification"], risk_class="medium",
@@ -292,6 +348,37 @@ def register_office_tools(registry) -> None:
             supported_applications=["Microsoft Excel"], resource_locks=["excel"],
             drop_decorative_args=True,
             arg_aliases={**common_xlsx_alias, "sheet": "sheet_name"},
+        ),
+        ToolDefinition(
+            key="excel.write_range", name="Write Range", version=1,
+            description=(
+                "Write multiple rows of data into an existing workbook starting at a cell address. "
+                "Use start_cell='A10' to append after existing data. "
+                "rows is a 2D list — each inner list is one row. "
+                "Accepts bare filename — auto-resolves path in workspace. "
+                "Perfect for adding new rows to an existing spreadsheet."
+            ),
+            input_schema={"path": "str", "start_cell": "str", "rows": "list", "sheet_name": "str?"},
+            output_schema={"written": "bool", "rows_written": "int", "cells_written": "int"},
+            capabilities=["spreadsheet_modification"], risk_class="medium",
+            side_effect_type="IDEMPOTENT_LOCAL", idempotency="non_idempotent",
+            verification_strategy="always", handler=tool_excel_write_range,
+            supported_applications=["Microsoft Excel"], resource_locks=["excel"],
+            drop_decorative_args=True,
+            arg_aliases={
+                **common_xlsx_alias,
+                "sheet": "sheet_name",
+                "start": "start_cell",
+                "cell": "start_cell",
+                "from_cell": "start_cell",
+                "starting_cell": "start_cell",
+                "data": "rows",
+                "table": "rows",
+                "values": "rows",
+                "records": "rows",
+                "row_data": "rows",
+                "new_rows": "rows",
+            },
         ),
         ToolDefinition(
             key="excel.read_cell", name="Read Cell", version=1,
