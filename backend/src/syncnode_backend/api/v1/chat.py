@@ -205,8 +205,20 @@ CAPABILITIES:
     computer.uia_type(text="content", window_title="Excel", wait_ready_ms=3000)
     computer.uia_click(window_title="Excel", name="Save")
     computer.key_press(keys="{Ctrl}s")  ← save
-    computer.key_press(keys="{Ctrl}w")  ← close tab
+    computer.key_press(keys="{Ctrl}w")  ← close current workbook in Excel
     computer.key_press(keys="{Alt}{F4}") ← close app
+
+CRITICAL — editing Excel/Word files that are currently OPEN:
+  openpyxl/python-docx cannot write a file while Office has it open (Permission denied).
+  Before calling excel.write_range or excel.write_cell on an open file, you MUST close it first:
+    computer.key_press(keys="{Ctrl}w")   ← closes the workbook in Excel
+  Then write: excel.write_range(path="...", start_cell="A10", rows=[...])
+  Then re-open: computer.windows_search(query="Battery_Data.xlsx", file_path="...")
+  
+  PATTERN for editing an open Excel file:
+    1. computer.key_press(keys="{Ctrl}w") → close workbook
+    2. excel.write_range(path="...", start_cell="A10", rows=[["China", "Export", "LFP"], ...])
+    3. computer.windows_search(query="Battery_Data.xlsx", file_path="<path>") → re-open
 
 - Search Windows taskbar for apps (computer.windows_search with query only, no file_path)
 - Control Chromium browser (browser.*)
@@ -765,6 +777,28 @@ async def chat_stream(session_id: str, req: SendMessageRequest):
                     ))
 
             # ── Persist assistant message ─────────────────────────────────────
+            # If the model only called tools and emitted no text, generate a
+            # brief summary so the chat bubble never stays stuck on "...".
+            if not full_response.strip() and tool_calls_made:
+                failed_tools = [r for r in tool_results_list if not r.get("success")]
+                succeeded_tools = [r for r in tool_results_list if r.get("success")]
+                if failed_tools:
+                    hints = []
+                    for r in failed_tools:
+                        inner = r.get("result", r)
+                        if isinstance(inner, dict):
+                            hint = inner.get("hint") or inner.get("error") or ""
+                        else:
+                            hint = str(inner)[:200]
+                        if hint:
+                            hints.append(hint)
+                    summary = f"The operation failed. {' '.join(hints)}" if hints else \
+                              f"Tool call failed: {failed_tools[0].get('tool', 'unknown')}"
+                else:
+                    names = [r.get("tool", "tool") for r in succeeded_tools[:3]]
+                    summary = f"Done — {', '.join(names)} completed successfully."
+                full_response = summary
+                yield _sse({"type": "delta", "content": summary})
             asst_id = str(uuid.uuid4())
             async with get_session() as db:
                 s = await db.get(ChatSession, session_id)

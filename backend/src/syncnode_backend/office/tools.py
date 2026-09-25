@@ -100,56 +100,114 @@ async def _resolve_xlsx_path(path: str) -> Path:
     return _safe_path(path)
 
 
+def _close_excel_if_open(xlsx_path: Path) -> bool:
+    """Try to close any Excel process that has this file open.
+    Uses PowerShell to gracefully save+close. Returns True if Excel was closed."""
+    try:
+        import subprocess
+        name = xlsx_path.name
+        # Ask Excel COM to save and close this workbook via PowerShell
+        ps = (
+            f'$xl = [Runtime.InteropServices.Marshal]::GetActiveObject("Excel.Application") 2>$null; '
+            f'if ($xl) {{ foreach ($wb in $xl.Workbooks) {{ if ($wb.Name -like "*{name}*") '
+            f'{{ $wb.Save(); $wb.Close($false) }} }} }}'
+        )
+        subprocess.run(["powershell", "-NonInteractive", "-Command", ps],
+                       timeout=5, capture_output=True)
+        import time; time.sleep(0.5)
+        return True
+    except Exception:
+        return False
+
+
+async def _write_xlsx_safe(p: Path, mutate_fn, max_retries: int = 3) -> dict:
+    """Call mutate_fn(wb, ws) on an openpyxl workbook, retrying on file-locked errors.
+    On first PermissionError tries to close Excel, then retries.
+    Returns {"ok": True, "sha256": ...} or {"ok": False, "error": ..., "hint": ...}
+    """
+    from openpyxl import load_workbook
+    import asyncio as _aio
+
+    last_err = None
+    for attempt in range(max_retries):
+        try:
+            wb = load_workbook(str(p))
+            mutate_fn(wb)
+            wb.save(str(p))
+            return {"ok": True, "sha256": _sha256(p)}
+        except PermissionError as exc:
+            last_err = exc
+            logger.warning("[EXCEL] file locked (attempt %d/%d): %s", attempt + 1, max_retries, p.name)
+            if attempt == 0:
+                # First failure: try to close Excel gracefully
+                _close_excel_if_open(p)
+            await _aio.sleep(1.0 * (attempt + 1))
+        except Exception as exc:
+            return {"ok": False, "error": str(exc), "hint": ""}
+
+    return {
+        "ok": False,
+        "error": f"File is locked by Excel after {max_retries} attempts: {p.name}",
+        "hint": (
+            f"The file '{p.name}' is currently open in Microsoft Excel. "
+            "Please close the file in Excel (Ctrl+W or File > Close), "
+            "then try again. Alternatively, use computer.key_press with "
+            "keys='{Ctrl}w' to close it."
+        ),
+    }
+
+
 async def tool_excel_write_cell(path: str, cell: str, value: Any,
                                 sheet_name: Optional[str] = None) -> dict[str, Any]:
     """Write a single cell (e.g. cell="B2") in an existing workbook.
-    Accepts a bare filename — auto-resolves to the most recent match in workspace.
+    Accepts a bare filename. If file is locked by Excel, tries to close it automatically.
     """
-    from openpyxl import load_workbook
     p = await _resolve_xlsx_path(path)
     if not p.exists():
         return {"written": False, "error": f"Workbook not found: {p}"}
-    wb = load_workbook(str(p))
-    ws = wb[sheet_name] if sheet_name and sheet_name in wb.sheetnames else wb.active
-    ws[cell] = value
-    wb.save(str(p))
-    return {"written": True, "path": str(p), "cell": cell, "sha256": _sha256(p)}
+
+    def _mutate(wb):
+        ws = wb[sheet_name] if sheet_name and sheet_name in wb.sheetnames else wb.active
+        ws[cell] = value
+
+    result = await _write_xlsx_safe(p, _mutate)
+    if result["ok"]:
+        return {"written": True, "path": str(p), "cell": cell, "sha256": result["sha256"]}
+    return {"written": False, "path": str(p), **{k: v for k, v in result.items() if k != "ok"}}
 
 
 async def tool_excel_write_range(path: str, start_cell: str, rows: list,
                                  sheet_name: Optional[str] = None) -> dict[str, Any]:
-    """Write multiple rows starting at `start_cell` (e.g. start_cell="A10").
-    `rows` is a 2D list — each inner list is one row of values.
-    Accepts a bare filename — auto-resolves to the most recent match in workspace.
-    Useful for appending new rows of data to an existing spreadsheet.
+    """Write multiple rows starting at start_cell. Accepts bare filename.
+    If file is locked by Excel, tries to close it automatically and retries.
     """
-    from openpyxl import load_workbook
     from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
 
     p = await _resolve_xlsx_path(path)
     if not p.exists():
         return {"written": False, "error": f"Workbook not found: {p}"}
 
-    wb = load_workbook(str(p))
-    ws = wb[sheet_name] if sheet_name and sheet_name in wb.sheetnames else wb.active
-
     col_letter, start_row = coordinate_from_string(start_cell)
     start_col = column_index_from_string(col_letter)
 
-    written = 0
-    for r_offset, row in enumerate(rows or []):
-        if not isinstance(row, (list, tuple)):
-            row = [row]
-        for c_offset, value in enumerate(row):
-            ws.cell(row=start_row + r_offset, column=start_col + c_offset, value=value)
-            written += 1
+    def _mutate(wb):
+        ws = wb[sheet_name] if sheet_name and sheet_name in wb.sheetnames else wb.active
+        for r_offset, row in enumerate(rows or []):
+            if not isinstance(row, (list, tuple)):
+                row = [row]
+            for c_offset, value in enumerate(row):
+                ws.cell(row=start_row + r_offset, column=start_col + c_offset, value=value)
 
-    wb.save(str(p))
-    logger.info("[EXCEL] write_range path=%s start=%s rows=%d cells=%d", p, start_cell, len(rows or []), written)
-    return {
-        "written": True, "path": str(p), "start_cell": start_cell,
-        "rows_written": len(rows or []), "cells_written": written, "sha256": _sha256(p),
-    }
+    result = await _write_xlsx_safe(p, _mutate)
+    if result["ok"]:
+        logger.info("[EXCEL] write_range path=%s start=%s rows=%d", p, start_cell, len(rows or []))
+        return {
+            "written": True, "path": str(p), "start_cell": start_cell,
+            "rows_written": len(rows or []),
+            "cells_written": sum(len(r) if isinstance(r, (list, tuple)) else 1 for r in (rows or [])),
+            "sha256": result["sha256"],
+        }
+    return {"written": False, "path": str(p), **{k: v for k, v in result.items() if k != "ok"}}
 
 
 async def tool_excel_read_cell(path: str, cell: str,
