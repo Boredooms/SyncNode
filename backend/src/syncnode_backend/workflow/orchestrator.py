@@ -1016,38 +1016,36 @@ class SyncNodeOrchestrator:
         step_key_low = step.step_key.lower()
         goal_low = (self._goal or "").lower()
 
-        # Extract fields from goal — prefer enricher output, fall back to regex
+        # ── Extract email fields: enricher first, then Gmail URL params, then regex ──
         email_to = self._artifacts.get("enricher_recipient", "")
         if not email_to:
             m = re.search(r"[\w.+-]+@[\w.-]+\.\w+", goal_low)
             if m:
                 email_to = m.group(0)
 
-        # Extract subject — prefer enricher
-        email_subject = self._artifacts.get("enricher_subject", "")
-        if not email_subject:
-            # Match: subject "X", subject 'X', or subject X (stops before "and body" / comma)
-            sm = re.search(
-                r'''subject\s+(?:"([^"]{1,120})"|'([^']{1,120})'|([^,\n"']{1,80}?)(?:\s+and\s+body|\s*,\s*body|\s*\.\s*$|\s*$))''',
-                goal_low, re.IGNORECASE
-            )
-            if sm:
-                email_subject = (sm.group(1) or sm.group(2) or sm.group(3) or "").strip().rstrip(".,;").strip()
+        # Pull subject/body from the Gmail URL that was navigated to — these
+        # were correctly encoded by the planner so they're reliable.
+        _gmail_subject = self._artifacts.get("gmail_compose_subject", "")
+        _gmail_body    = self._artifacts.get("gmail_compose_body", "")
 
-        # Extract body — prefer enricher, then goal regex
-        email_body_goal = self._artifacts.get("enricher_body", "")
+        email_subject = self._artifacts.get("enricher_subject", "") or _gmail_subject
+        if not email_subject:
+            # Safe minimal regex: only match quoted subject strings
+            sm = re.search(r'''subject\s+"([^"]{1,120})"''', goal_low, re.IGNORECASE)
+            if not sm:
+                sm = re.search(r"""subject\s+'([^']{1,120})'""", goal_low, re.IGNORECASE)
+            if sm:
+                email_subject = sm.group(1).strip()
+
+        email_body_goal = self._artifacts.get("enricher_body", "") or _gmail_body
         if not email_body_goal:
-            bm = re.search(r"body\s+([^,\.]+(?:\.[^,\.]+)*?)(?:,\s*(?:attach|stop|send|end)|$)", goal_low)
+            # Match: body "..." or body '...' (quoted only — avoids over-capture)
+            bm = re.search(r'''body\s+"([^"]{1,400})"''', goal_low, re.IGNORECASE)
+            if not bm:
+                bm = re.search(r"""body\s+'([^']{1,400})'""", goal_low, re.IGNORECASE)
             if bm:
                 email_body_goal = bm.group(1).strip()
 
-        # The actual body text priority:
-        # 1. Goal's explicit body (what the user wrote: "body Please find...")
-        # 2. Enricher-extracted body hint
-        # 3. The planner's text value (if any)
-        # 4. Writer paragraph ONLY if no body was specified at all
-        # This ensures "body Please find the attached ocean document." wins over
-        # the writer's full paragraph which belongs in the Word doc, not the email.
         writer_content = self._artifacts.get("content", "")
         body_text = email_body_goal or text_val or writer_content
 
@@ -1595,12 +1593,25 @@ class SyncNodeOrchestrator:
                 self._artifacts["content"] = content
 
         # After browser.navigate to a compose page: auto-fill To/Subject/Body
-        # directly via Playwright so fields are populated regardless of whether
-        # the planner included browser.type steps or the URL had query params.
+        # and capture URL params for use by browser.type steps.
         if step.action == "browser.navigate":
             url = (tool_result.get("url") or tool_result.get("requested_url") or "").lower()
             _compose_hints = ("compose", "mail", "gmail", "outlook", "fixture", "webmail")
             if any(h in url for h in _compose_hints):
+                # Capture subject/body from the URL that was actually navigated to
+                try:
+                    from urllib.parse import urlparse, parse_qs, unquote_plus
+                    raw_url = tool_result.get("requested_url") or tool_result.get("url") or ""
+                    parsed = urlparse(raw_url)
+                    params = parse_qs(parsed.query, keep_blank_values=False)
+                    for key in ("subject", "su"):
+                        if key in params:
+                            self._artifacts["gmail_compose_subject"] = unquote_plus(params[key][0])
+                            break
+                    if "body" in params:
+                        self._artifacts["gmail_compose_body"] = unquote_plus(params["body"][0])
+                except Exception:
+                    pass
                 await self._fill_compose_fields_after_navigate()
 
         # Capture fs_search result — the first found file becomes available for
@@ -1673,20 +1684,22 @@ class SyncNodeOrchestrator:
                     email_to = m.group(0)
 
             # ── Subject ──────────────────────────────────────────────────
-            email_subject = self._artifacts.get("enricher_subject", "")
+            email_subject = (self._artifacts.get("enricher_subject", "")
+                             or self._artifacts.get("gmail_compose_subject", ""))
             if not email_subject:
-                sm = re.search(
-                    r'''subject\s+(?:"([^"]{1,120})"|'([^']{1,120})'|([^,\n"']{1,80}?)(?:\s+and\s+body|\s*,\s*body|\s*\.\s*$|\s*$))''',
-                    goal_low, re.IGNORECASE
-                )
+                sm = re.search(r'''subject\s+"([^"]{1,120})"''', goal_low, re.IGNORECASE)
+                if not sm:
+                    sm = re.search(r"""subject\s+'([^']{1,120})'""", goal_low, re.IGNORECASE)
                 if sm:
-                    email_subject = (sm.group(1) or sm.group(2) or sm.group(3) or "").strip().rstrip(".,;").strip()
+                    email_subject = sm.group(1).strip()
 
             # ── Body ─────────────────────────────────────────────────────
-            email_body = self._artifacts.get("enricher_body", "")
+            email_body = (self._artifacts.get("enricher_body", "")
+                          or self._artifacts.get("gmail_compose_body", ""))
             if not email_body:
-                bm = re.search(r'''body\s+['""]?(.{10,300}?)['""]?(?:\s*(?:attach|do not|stop|send|end)|$)''',
-                               goal_low, re.DOTALL)
+                bm = re.search(r'''body\s+"([^"]{1,400})"''', goal_low, re.IGNORECASE)
+                if not bm:
+                    bm = re.search(r"""body\s+'([^']{1,400})'""", goal_low, re.IGNORECASE)
                 if bm:
                     email_body = bm.group(1).strip()
 

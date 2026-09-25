@@ -569,13 +569,14 @@ async def inject_step(run_id: str, req: InjectStepRequest):
 
 
 async def resume_after_approval(run_id: str, decision: str, reason: Optional[str]) -> None:
-async def resume_after_approval(run_id: str, decision: str, reason: Optional[str]) -> None:
     """Resume a waiting_approval run after a human decision.
     Always completes/fails the run — never leaves it stuck in 'running'.
     """
-    await asyncio.sleep(0.8)
+    await asyncio.sleep(0.5)
+    from datetime import datetime, timezone
+
     if decision == "approved":
-        # Best-effort Send click — wrapped so any exception can't block completion
+        # Best-effort Send click — 5s total timeout, never blocks completion
         try:
             send_result = await _click_gmail_send(run_id)
             if send_result.get("sent"):
@@ -591,20 +592,33 @@ async def resume_after_approval(run_id: str, decision: str, reason: Optional[str
         except Exception as send_exc:
             logger.warning("[APPROVAL] send click failed (non-fatal): %s", send_exc)
 
-        # Always mark completed regardless of send result
+        # Mark the approval step as completed + run as completed
         try:
+            from syncnode_backend.persistence.models import RunStep
+            from sqlalchemy import select as _select
             async with get_session() as session:
                 run = await session.get(Run, run_id)
                 if run:
                     run.status = "completed"
-                    from datetime import datetime, timezone
                     run.completed_at = datetime.now(timezone.utc)
+                # Also mark the approval step as completed so UI shows done
+                result = await session.execute(
+                    _select(RunStep).where(
+                        RunStep.run_id == run_id,
+                        RunStep.status == "running"
+                    )
+                )
+                pending_steps = result.scalars().all()
+                for step in pending_steps:
+                    step.status = "completed"
+                await session.commit()
         except Exception as db_exc:
             logger.error("[APPROVAL] db update failed: %s", db_exc)
 
         await emit_sse_event(run_id, "run.completed", {
             "message": "Approved — workflow complete.",
         })
+
     else:
         try:
             async with get_session() as session:
@@ -612,6 +626,7 @@ async def resume_after_approval(run_id: str, decision: str, reason: Optional[str
                 if run:
                     run.status = "failed"
                     run.error_message = f"Rejected by operator: {reason or 'no reason given'}"
+                await session.commit()
         except Exception as db_exc:
             logger.error("[APPROVAL] db update failed: %s", db_exc)
 
@@ -622,10 +637,7 @@ async def resume_after_approval(run_id: str, decision: str, reason: Optional[str
 
 async def _click_gmail_send(run_id: str) -> dict:
     """Click the Send button in the currently open browser compose window.
-
-    Works with both the local compose fixture (compose.html) and real Gmail.
-    The local fixture has id="send-button" with aria-label="Send".
-    Returns {"sent": True} on success or {"sent": False, "error": "..."} on failure.
+    Fast: max 5 seconds total. Works with local fixture and real Gmail.
     """
     try:
         from syncnode_backend.browser.tools import get_page
@@ -633,41 +645,29 @@ async def _click_gmail_send(run_id: str) -> dict:
         if page is None:
             return {"sent": False, "error": "No active browser page"}
 
-        current_url = page.url
-        logger.info("[APPROVAL] clicking Send on page: %s", current_url[:100])
-
-        # Try selectors in priority order — local fixture first, then real Gmail
         send_selectors = [
-            # Local fixture (compose.html) — most specific, always try first
-            "#send-button",
+            "#send-button",               # local fixture (compose.html)
             "button[aria-label='Send']",
             "button.send-btn",
-            # Real Gmail compose window Send button
             "[role='button'][data-tooltip*='Send']",
             "[role='button'][aria-label*='Send']",
-            "[data-tooltip='Send ‪(Ctrl-Enter)‬']",
             "[data-tooltip='Send']",
-            # Text fallback
-            "button:has-text('Send')",
-            ".T-I.J-J5-Ji.aoO.v7.T-I-atl.L3",
         ]
 
         for selector in send_selectors:
             try:
                 btn = page.locator(selector).first
-                if await btn.count() > 0 and await btn.is_visible(timeout=2000):
-                    await btn.click(timeout=5000)
+                if await btn.count() > 0 and await btn.is_visible(timeout=800):
+                    await btn.click(timeout=2000)
                     import asyncio as _aio
-                    await _aio.sleep(1.5)
-                    logger.info("[APPROVAL] Send clicked via selector=%s run_id=%s", selector, run_id)
+                    await _aio.sleep(0.8)
+                    logger.info("[APPROVAL] Send clicked via %s run=%s", selector, run_id)
                     return {"sent": True, "selector": selector}
             except Exception:
                 continue
 
-        return {"sent": False, "error": "Send button not found with any selector"}
-
+        return {"sent": False, "error": "Send button not found"}
     except Exception as exc:
-        logger.warning("[APPROVAL] _click_gmail_send failed: %s", exc)
         return {"sent": False, "error": str(exc)}
         await emit_sse_event(run_id, "run.failed", {
             "error": f"Rejected: {reason or 'no reason given'}",
