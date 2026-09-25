@@ -124,6 +124,11 @@ def _resolve_navigation_url(url: str) -> str:
     When redirecting, preserve any Gmail compose query parameters (to, subject,
     body) by appending them to the local fixture URL so compose.html can
     pre-fill the fields on load.
+
+    Gmail compose URL format:
+      https://mail.google.com/mail/u/0/?view=cm&fs=1&to=X&su=SUBJECT&body=BODY
+    Note: Gmail uses 'su' for subject, standard mailto uses 'subject'.
+    Both are normalised to 'subject' for the fixture.
     """
     from syncnode_backend.config.settings import settings
     local = settings.syncnode_mail_compose_url
@@ -131,23 +136,41 @@ def _resolve_navigation_url(url: str) -> str:
         return url
     low = (url or "").lower()
     if any(h in low for h in _MAIL_COMPOSE_HINTS):
-        # Extract Gmail compose params and forward them to the local fixture.
         try:
             from urllib.parse import urlparse, parse_qs, urlencode, urljoin
             parsed = urlparse(url)
             params = parse_qs(parsed.query, keep_blank_values=False)
-            # Gmail uses 'to', 'subject', 'body' directly; some clients use 'fs','view' etc. — keep only compose fields
             forward = {}
-            for key in ("to", "subject", "body", "cc", "bcc"):
+            # 'to' recipient
+            for key in ("to", "recipient"):
                 if key in params:
-                    forward[key] = params[key][0]  # take first value
+                    forward["to"] = params[key][0]
+                    break
+            # 'subject' — Gmail uses 'su', standard uses 'subject'
+            for key in ("subject", "su"):
+                if key in params:
+                    forward["subject"] = params[key][0]
+                    break
+            # 'body'
+            for key in ("body",):
+                if key in params:
+                    forward["body"] = params[key][0]
+                    break
+            # cc / bcc passthrough
+            for key in ("cc", "bcc"):
+                if key in params:
+                    forward[key] = params[key][0]
             if forward:
-                target = local + ("&" if "?" in local else "?") + urlencode(forward)
-                logger.info(f"Redirecting mail-compose navigation {url!r} -> local fixture (with {list(forward.keys())} params)")
+                sep = "&" if "?" in local else "?"
+                target = local + sep + urlencode(forward)
+                logger.info(
+                    "Redirecting mail-compose %r -> local fixture (fields: %s)",
+                    url, list(forward.keys()),
+                )
                 return target
-        except Exception:
-            pass
-        logger.info(f"Redirecting mail-compose navigation {url!r} -> local fixture")
+        except Exception as exc:
+            logger.warning("URL param forwarding failed: %s", exc)
+        logger.info("Redirecting mail-compose %r -> local fixture (no params)", url)
         return local
     return url
 

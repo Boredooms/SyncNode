@@ -393,7 +393,7 @@ async def tool_computer_uia_type(
     automation_id: Optional[str] = None,
     clear_first: bool = False,
     wait_ms: int = 100,
-    wait_ready_ms: int = 2000,  # wait for window to be ready before typing
+    wait_ready_ms: int = 2000,
 ) -> dict[str, Any]:
     """Type text into a UIA control (or the currently focused element).
 
@@ -402,25 +402,31 @@ async def tool_computer_uia_type(
     If neither is given, types into whatever has focus.
 
     Use clear_first=True to select-all before typing (replaces existing content).
-    wait_ready_ms: extra wait after clicking window before SendKeys fires (allows
-    Word/Excel to fully focus the document area — default 2000ms).
+    wait_ready_ms (default 2000ms) controls how long to poll for the window.
     """
     try:
         import uiautomation as auto
 
+        # Strip file extensions from window_title — Office apps show "Battery_Report"
+        # not "Battery_Report.docx" in the title bar.
+        search_title = window_title
+        if search_title:
+            import re as _re
+            search_title = _re.sub(r'\.(docx?|xlsx?|pptx?|pdf|txt)$', '',
+                                   search_title, flags=_re.IGNORECASE).strip()
+
         win = None
-        if window_title:
-            # Poll for the window up to wait_ready_ms before giving up
-            # (Word can take 1-3s to become interactive after launch_app)
+        if search_title:
             poll_deadline = time.time() + max(wait_ready_ms / 1000.0, 3.0)
             while time.time() < poll_deadline:
-                candidate = auto.WindowControl(searchDepth=1, Name=window_title)
+                candidate = auto.WindowControl(searchDepth=1, Name=search_title)
                 if candidate.Exists(0.5, 0.1):
                     win = candidate
                     break
-                # partial match
+                # partial match — scan all top-level windows
                 for w in auto.GetRootControl().GetChildren():
-                    if window_title.lower() in (w.Name or "").lower():
+                    wname = (w.Name or "").lower()
+                    if search_title.lower() in wname:
                         win = w
                         break
                 if win:
@@ -428,13 +434,17 @@ async def tool_computer_uia_type(
                 time.sleep(0.3)
 
             if win is None:
-                # One final broader partial scan
+                # broader scan with even shorter match
                 for w in auto.GetRootControl().GetChildren():
-                    if window_title.lower() in (w.Name or "").lower():
+                    wname = (w.Name or "").lower()
+                    # match any word from the search title
+                    words = [s for s in search_title.lower().split() if len(s) > 3]
+                    if words and any(word in wname for word in words):
                         win = w
                         break
                 if win is None:
-                    return {"typed": False, "error": f"Window '{window_title}' not found after {wait_ready_ms}ms"}
+                    return {"typed": False,
+                            "error": f"Window '{window_title}' (searched: '{search_title}') not found after {wait_ready_ms}ms"}
 
             if automation_id:
                 ctrl = win.Control(AutomationId=automation_id)
@@ -444,9 +454,7 @@ async def tool_computer_uia_type(
                 else:
                     win.Click()
             else:
-                # Click into the window body to ensure document area focus
                 win.Click()
-                # Additional wait so Word's editing area is ready for SendKeys
                 time.sleep(max(wait_ms / 1000.0, 0.5))
 
         time.sleep(wait_ms / 1000.0)
@@ -455,14 +463,11 @@ async def tool_computer_uia_type(
             auto.SendKeys("{Ctrl}a", waitTime=0.1)
             time.sleep(0.15)
 
-        # Type the text — SendKeys handles special chars
-        # For long content, split into chunks to avoid UIA buffer overflow
         chunk_size = 200
         for i in range(0, len(text), chunk_size):
             chunk = text[i:i + chunk_size]
             auto.SendKeys(chunk, waitTime=0.03)
 
-        # Small settle wait so the content is flushed into the document
         time.sleep(max(wait_ms / 1000.0, 0.2))
         logger.info("[UIA] typed %d chars into window=%s", len(text), window_title or "focused")
         return {

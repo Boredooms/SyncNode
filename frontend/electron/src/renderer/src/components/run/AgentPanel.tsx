@@ -324,7 +324,7 @@ export function AgentPanel({ runId }: AgentPanelProps) {
           {run && (
             <div className="px-3 py-3">
               <p className="text-[9px] uppercase tracking-widest text-white/25 mb-1.5 font-mono">Task Objective</p>
-              <p className="text-[11px] text-white/70 leading-relaxed select-text">{run.goal}</p>
+              <p className="text-[11px] text-white/70 leading-relaxed select-text break-words line-clamp-4">{run.goal}</p>
             </div>
           )}
 

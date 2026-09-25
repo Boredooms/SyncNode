@@ -539,22 +539,34 @@ class SyncNodeOrchestrator:
         pause_seen = False
         for step in plan.steps:
             action = step.action or ""
-            # Hard rule: nothing after workflow.pause — those steps never execute
-            # and cause the run to loop/fail. Drop them unconditionally.
+
+            # Hard rule: nothing after an EXPLICIT workflow.pause control action.
+            # ONLY workflow.pause (the control action) terminates the plan.
+            # requires_approval=True on regular tool steps does NOT terminate —
+            # those steps execute and then raise ApprovalRequiredSignal themselves.
             if pause_seen:
                 dropped.append(f"{step.step_key}({action}) [after-pause]")
                 continue
-            if action == "workflow.pause" or step.requires_approval:
-                pause_seen = True
-            is_tool = tool_registry.get(action) is not None
-            is_control = action in self._CONTROL_ACTIONS
+
             # Override planner: compose/attach actions are never approval gates
             if action in _NEVER_GATE:
                 step.requires_approval = False
+
+            # Mark pause only after we've processed the step's NEVER_GATE override,
+            # and ONLY for the explicit workflow.pause control action.
+            if action == "workflow.pause":
+                pause_seen = True
+
+            is_tool = tool_registry.get(action) is not None
+            is_control = action in self._CONTROL_ACTIONS
             if is_tool or is_control or step.requires_approval:
                 valid.append(step)
             else:
                 dropped.append(f"{step.step_key}({action})")
+        if dropped:
+            logger.warning(f"[PLAN] dropped {len(dropped)} steps with unknown actions: {dropped}")
+        plan.steps = valid
+        plan.total_steps = len(valid)
         if dropped:
             logger.warning(f"[PLAN] dropped {len(dropped)} steps with unknown actions: {dropped}")
         plan.steps = valid
@@ -1014,9 +1026,13 @@ class SyncNodeOrchestrator:
         # Extract subject — prefer enricher
         email_subject = self._artifacts.get("enricher_subject", "")
         if not email_subject:
-            sm = re.search(r"subject\s+([^,\.]+)", goal_low)
+            # Match: subject "X", subject 'X', or subject X (stops before "and body" / comma)
+            sm = re.search(
+                r'''subject\s+(?:"([^"]{1,120})"|'([^']{1,120})'|([^,\n"']{1,80}?)(?:\s+and\s+body|\s*,\s*body|\s*\.\s*$|\s*$))''',
+                goal_low, re.IGNORECASE
+            )
             if sm:
-                email_subject = sm.group(1).strip().rstrip(".,;").strip()
+                email_subject = (sm.group(1) or sm.group(2) or sm.group(3) or "").strip().rstrip(".,;").strip()
 
         # Extract body — prefer enricher, then goal regex
         email_body_goal = self._artifacts.get("enricher_body", "")
@@ -1253,7 +1269,13 @@ class SyncNodeOrchestrator:
         if step.action in ("document.create_docx", "filesystem.write", "computer.uia_type"):
             generated = self._artifacts.get("content")
             content_key = "text" if step.action == "computer.uia_type" else "content"
-            supplied_content = str(inputs.get(content_key, "")).strip()
+            raw_val = inputs.get(content_key)
+            # Force non-string content values (dicts, lists, symbolic refs) to empty
+            # so the injection logic can replace them with the real generated content.
+            if raw_val is not None and not isinstance(raw_val, str):
+                inputs[content_key] = ""
+                raw_val = ""
+            supplied_content = str(raw_val or "").strip()
             looks_symbolic = (
                 self._is_placeholder(supplied_content)
                 or self._looks_like_field_ref(supplied_content)
@@ -1305,7 +1327,6 @@ class SyncNodeOrchestrator:
         if step.action == "computer.key_press":
             keys_val = str(inputs.get("keys", "")).lower()
             if "{ctrl}s" in keys_val or "ctrl+s" in keys_val:
-                # Determine which artifact was most recently opened
                 _save_art_order = ["doc_path", "word_path", "excel_path", "powerpoint_path"]
                 for art_key in _save_art_order:
                     art_path = self._artifacts.get(art_key)
@@ -1313,13 +1334,19 @@ class SyncNodeOrchestrator:
                         from pathlib import Path as _P
                         if _P(art_path).exists():
                             for pc in (step.postconditions or []):
-                                target = str(pc.get("target", "")).strip()
-                                atype = str(pc.get("assertion_type", "")).lower()
-                                if "save" in atype or "file" in atype:
-                                    if not target or not _P(target).is_absolute():
+                                # Handle both Pydantic models and plain dicts
+                                if hasattr(pc, "assertion_type"):
+                                    atype = str(pc.assertion_type or "").lower()
+                                    target = str(pc.target or "").strip()
+                                    if ("save" in atype or "file" in atype) and (not target or not _P(target).is_absolute()):
+                                        pc.target = art_path
+                                        logger.info("[FLOW] pre-filled key_press postcondition target=%s for %s", art_path, step.step_key)
+                                elif isinstance(pc, dict):
+                                    atype = str(pc.get("assertion_type", "")).lower()
+                                    target = str(pc.get("target", "")).strip()
+                                    if ("save" in atype or "file" in atype) and (not target or not _P(target).is_absolute()):
                                         pc["target"] = art_path
-                                        logger.info("[FLOW] pre-filled key_press postcondition "
-                                                    "target=%s for step %s", art_path, step.step_key)
+                                        logger.info("[FLOW] pre-filled key_press postcondition target=%s for %s", art_path, step.step_key)
                             break
 
         # The created document path flows to verify/read steps that take `path`.
@@ -1567,6 +1594,15 @@ class SyncNodeOrchestrator:
             if isinstance(content, str) and content.strip():
                 self._artifacts["content"] = content
 
+        # After browser.navigate to a compose page: auto-fill To/Subject/Body
+        # directly via Playwright so fields are populated regardless of whether
+        # the planner included browser.type steps or the URL had query params.
+        if step.action == "browser.navigate":
+            url = (tool_result.get("url") or tool_result.get("requested_url") or "").lower()
+            _compose_hints = ("compose", "mail", "gmail", "outlook", "fixture", "webmail")
+            if any(h in url for h in _compose_hints):
+                await self._fill_compose_fields_after_navigate()
+
         # Capture fs_search result — the first found file becomes available for
         # the subsequent windows_search/launch_app open step.
         if step.action == "system.fs_search":
@@ -1609,6 +1645,83 @@ class SyncNodeOrchestrator:
                     await self._persist_artifact(rec)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("[ARTIFACT] register failed: %s", exc)
+
+    async def _fill_compose_fields_after_navigate(self) -> None:
+        """Auto-fill the compose form fields immediately after browser.navigate
+        lands on the compose page. Uses the browser directly so fields are
+        populated regardless of URL params or planner browser.type steps.
+
+        Field priority for each slot:
+          to      — enricher_recipient > goal regex
+          subject — enricher_subject   > goal regex
+          body    — enricher_body      > goal regex  (writer paragraph NOT used here)
+        """
+        import re
+        try:
+            from syncnode_backend.browser.tools import get_page
+            page = await get_page()
+            if page is None:
+                return
+
+            goal_low = (self._goal or "").lower()
+
+            # ── To / recipient ───────────────────────────────────────────
+            email_to = self._artifacts.get("enricher_recipient", "")
+            if not email_to:
+                m = re.search(r"[\w.+-]+@[\w.-]+\.\w+", goal_low)
+                if m:
+                    email_to = m.group(0)
+
+            # ── Subject ──────────────────────────────────────────────────
+            email_subject = self._artifacts.get("enricher_subject", "")
+            if not email_subject:
+                sm = re.search(
+                    r'''subject\s+(?:"([^"]{1,120})"|'([^']{1,120})'|([^,\n"']{1,80}?)(?:\s+and\s+body|\s*,\s*body|\s*\.\s*$|\s*$))''',
+                    goal_low, re.IGNORECASE
+                )
+                if sm:
+                    email_subject = (sm.group(1) or sm.group(2) or sm.group(3) or "").strip().rstrip(".,;").strip()
+
+            # ── Body ─────────────────────────────────────────────────────
+            email_body = self._artifacts.get("enricher_body", "")
+            if not email_body:
+                bm = re.search(r'''body\s+['""]?(.{10,300}?)['""]?(?:\s*(?:attach|do not|stop|send|end)|$)''',
+                               goal_low, re.DOTALL)
+                if bm:
+                    email_body = bm.group(1).strip()
+
+            # ── Fill fields with a small delay between each ──────────────
+            import asyncio as _aio
+            await _aio.sleep(0.8)  # let compose page finish rendering
+
+            # Map field → value, fill only non-empty values
+            fields = [
+                ("#to",      email_to),
+                ("#subject", email_subject),
+                ("#body",    email_body),
+            ]
+            filled = []
+            for selector, value in fields:
+                if not value:
+                    continue
+                try:
+                    loc = page.locator(selector).first
+                    if await loc.count() > 0:
+                        await loc.fill(str(value), timeout=3000)
+                        filled.append(selector.lstrip("#"))
+                        await _aio.sleep(0.15)
+                except Exception as exc:
+                    logger.debug("[COMPOSE] could not fill %s: %s", selector, exc)
+
+            if filled:
+                logger.info("[COMPOSE] auto-filled fields after navigate: %s", filled)
+                await self._emit_event("browser.compose_filled", {
+                    "fields": filled,
+                    "to": email_to,
+                    "subject": email_subject,
+                })
+        except Exception as exc:
+            logger.warning("[COMPOSE] _fill_compose_fields_after_navigate failed (non-fatal): %s", exc)
 
     async def _persist_artifact(self, rec) -> None:
         try:

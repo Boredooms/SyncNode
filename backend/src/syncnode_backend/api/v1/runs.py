@@ -569,55 +569,62 @@ async def inject_step(run_id: str, req: InjectStepRequest):
 
 
 async def resume_after_approval(run_id: str, decision: str, reason: Optional[str]) -> None:
+async def resume_after_approval(run_id: str, decision: str, reason: Optional[str]) -> None:
     """Resume a waiting_approval run after a human decision.
-
-    Approved  → click the Gmail Send button (the compose window is still open),
-                then emit run.completed.
-    Rejected  → emit run.failed with a reason.
+    Always completes/fails the run — never leaves it stuck in 'running'.
     """
-    await asyncio.sleep(0.8)  # brief pause so the client sees approval.decided first
+    await asyncio.sleep(0.8)
     if decision == "approved":
-        # Try to click the Send button in the open Gmail compose window.
-        # This is best-effort — if Playwright/browser is no longer available
-        # the run still completes (the email may need to be sent manually).
-        send_result = await _click_gmail_send(run_id)
-        if send_result.get("sent"):
-            await emit_sse_event(run_id, "tool.completed", {
-                "tool_key": "browser.click",
-                "step_key": "send_email_approved",
-                "result": {"clicked": True, "target": "Send button"},
-                "note": "Send button clicked after human approval",
-            })
-        else:
-            await emit_sse_event(run_id, "run.warning", {
-                "message": f"Could not auto-click Send: {send_result.get('error', 'browser unavailable')}. "
-                           f"Please click Send manually in the browser.",
-            })
+        # Best-effort Send click — wrapped so any exception can't block completion
+        try:
+            send_result = await _click_gmail_send(run_id)
+            if send_result.get("sent"):
+                await emit_sse_event(run_id, "tool.completed", {
+                    "tool_key": "browser.click",
+                    "step_key": "send_email_approved",
+                    "result": {"clicked": True, "target": "Send button"},
+                })
+            else:
+                await emit_sse_event(run_id, "run.warning", {
+                    "message": f"Send not auto-clicked: {send_result.get('error', 'browser unavailable')}. Click Send manually.",
+                })
+        except Exception as send_exc:
+            logger.warning("[APPROVAL] send click failed (non-fatal): %s", send_exc)
 
-        async with get_session() as session:
-            run = await session.get(Run, run_id)
-            if run:
-                run.status = "completed"
-                from datetime import datetime, timezone
-                run.completed_at = datetime.now(timezone.utc)
+        # Always mark completed regardless of send result
+        try:
+            async with get_session() as session:
+                run = await session.get(Run, run_id)
+                if run:
+                    run.status = "completed"
+                    from datetime import datetime, timezone
+                    run.completed_at = datetime.now(timezone.utc)
+        except Exception as db_exc:
+            logger.error("[APPROVAL] db update failed: %s", db_exc)
+
         await emit_sse_event(run_id, "run.completed", {
-            "message": "Approved — email sent — workflow complete.",
+            "message": "Approved — workflow complete.",
         })
     else:
-        async with get_session() as session:
-            run = await session.get(Run, run_id)
-            if run:
-                run.status = "failed"
-                run.error_message = f"Rejected by operator: {reason or 'no reason given'}"
+        try:
+            async with get_session() as session:
+                run = await session.get(Run, run_id)
+                if run:
+                    run.status = "failed"
+                    run.error_message = f"Rejected by operator: {reason or 'no reason given'}"
+        except Exception as db_exc:
+            logger.error("[APPROVAL] db update failed: %s", db_exc)
+
         await emit_sse_event(run_id, "run.failed", {
             "error": f"Rejected: {reason or 'no reason given'}",
         })
 
 
 async def _click_gmail_send(run_id: str) -> dict:
-    """Click the Gmail Send button in the currently open Playwright browser session.
+    """Click the Send button in the currently open browser compose window.
 
-    Tries multiple selectors for the Send button since Gmail's DOM varies.
+    Works with both the local compose fixture (compose.html) and real Gmail.
+    The local fixture has id="send-button" with aria-label="Send".
     Returns {"sent": True} on success or {"sent": False, "error": "..."} on failure.
     """
     try:
@@ -627,41 +634,37 @@ async def _click_gmail_send(run_id: str) -> dict:
             return {"sent": False, "error": "No active browser page"}
 
         current_url = page.url
-        if "mail.google.com" not in current_url:
-            return {"sent": False, "error": f"Browser not on Gmail (url={current_url[:80]})"}
+        logger.info("[APPROVAL] clicking Send on page: %s", current_url[:100])
 
-        # Gmail Send button selectors — try in priority order
+        # Try selectors in priority order — local fixture first, then real Gmail
         send_selectors = [
-            # Primary: role-based (most reliable)
+            # Local fixture (compose.html) — most specific, always try first
+            "#send-button",
+            "button[aria-label='Send']",
+            "button.send-btn",
+            # Real Gmail compose window Send button
             "[role='button'][data-tooltip*='Send']",
             "[role='button'][aria-label*='Send']",
-            # Gmail compose toolbar Send button by data attribute
             "[data-tooltip='Send ‪(Ctrl-Enter)‬']",
             "[data-tooltip='Send']",
-            # Fallback: text content
-            "div[role='button']:has-text('Send')",
-            # Last resort: any button with Send text in the compose area
-            ".T-I.J-J5-Ji.aoO.v7.T-I-atl.L3",  # Gmail's internal Send class
+            # Text fallback
+            "button:has-text('Send')",
+            ".T-I.J-J5-Ji.aoO.v7.T-I-atl.L3",
         ]
 
-        clicked = False
         for selector in send_selectors:
             try:
                 btn = page.locator(selector).first
                 if await btn.count() > 0 and await btn.is_visible(timeout=2000):
                     await btn.click(timeout=5000)
                     import asyncio as _aio
-                    await _aio.sleep(1.5)  # wait for Gmail to process the send
-                    clicked = True
-                    logger.info("[APPROVAL] Gmail Send clicked via selector: %s run_id=%s",
-                                selector, run_id)
-                    break
+                    await _aio.sleep(1.5)
+                    logger.info("[APPROVAL] Send clicked via selector=%s run_id=%s", selector, run_id)
+                    return {"sent": True, "selector": selector}
             except Exception:
                 continue
 
-        if clicked:
-            return {"sent": True}
-        return {"sent": False, "error": "Send button not found with any selector — Gmail DOM may have changed"}
+        return {"sent": False, "error": "Send button not found with any selector"}
 
     except Exception as exc:
         logger.warning("[APPROVAL] _click_gmail_send failed: %s", exc)

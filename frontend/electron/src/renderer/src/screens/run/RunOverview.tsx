@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useOutletContext, useNavigate } from 'react-router-dom'
-import { FileText, Shield, Users, Clock, Activity, Code, ChevronRight, CheckCircle2, Sparkles, XCircle } from 'lucide-react'
+import { FileText, Shield, Users, Clock, Activity, Code, ChevronRight, CheckCircle2, Sparkles, XCircle, ChevronDown } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn, formatTimestamp } from '../../lib/utils'
 import type { RunState } from '../../stores/runStore'
@@ -16,6 +16,7 @@ export function RunOverview() {
   const { runId, runState } = useOutletContext<RunTabContext>()
   const navigate = useNavigate()
   const [inspectData, setInspectData] = useState<{ title: string; data: any } | null>(null)
+  const [goalExpanded, setGoalExpanded] = useState(false)
 
   const { run, steps = [], artifacts = [], verifications = [], approvals = [], sseEvents = [], activeAgents = {} } = runState
 
@@ -65,9 +66,13 @@ export function RunOverview() {
             className="rounded-xl border border-red-500/30 bg-red-950/10 px-5 py-4 flex items-center gap-4"
           >
             <XCircle size={18} className="text-red-400 flex-shrink-0" />
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <p className="text-[13px] font-semibold text-red-300">Workflow Failed</p>
-              {run.error && <p className="text-[11px] text-red-400/70 font-mono mt-0.5">{run.error}</p>}
+              {run.error && (
+                <p className="text-[11px] text-red-400/70 font-mono mt-0.5 break-all line-clamp-3">
+                  {run.error}
+                </p>
+              )}
             </div>
           </motion.div>
         )}
@@ -96,23 +101,45 @@ export function RunOverview() {
       </AnimatePresence>
 
       {/* Goal Banner */}
-      <div className="p-5 rounded-xl border border-white/[0.07] bg-[#0e0e0e] shadow-sm flex items-start justify-between gap-4">
-        <div className="space-y-1.5 flex-1">
-          <p className="text-[10px] text-white/30 uppercase tracking-widest font-mono font-semibold">Goal</p>
-          <p className="text-[14px] text-white/90 font-medium leading-relaxed select-text">{run.goal}</p>
-          {run.model_id && (
-            <p className="text-[10px] text-white/40 font-mono mt-1">Model: {run.model_id}</p>
-          )}
-        </div>
+      <div className="p-5 rounded-xl border border-white/[0.07] bg-[#0e0e0e] shadow-sm">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1.5 flex-1 min-w-0">
+            <p className="text-[10px] text-white/30 uppercase tracking-widest font-mono font-semibold">Goal</p>
+            {/* Show truncated by default, expand on click */}
+            <p
+              className={cn(
+                'text-[13px] text-white/85 leading-relaxed select-text break-words',
+                !goalExpanded && 'line-clamp-3'
+              )}
+            >
+              {run.goal}
+            </p>
+            {run.goal.length > 180 && (
+              <button
+                onClick={() => setGoalExpanded(v => !v)}
+                className="flex items-center gap-1 text-[10px] text-white/35 hover:text-white/60 transition-colors mt-1"
+              >
+                <ChevronDown
+                  size={11}
+                  className={cn('transition-transform duration-150', goalExpanded && 'rotate-180')}
+                />
+                {goalExpanded ? 'Show less' : 'Show full goal'}
+              </button>
+            )}
+            {run.model_id && (
+              <p className="text-[10px] text-white/40 font-mono mt-1">Model: {run.model_id}</p>
+            )}
+          </div>
 
-        <button
-          onClick={() => setInspectData({ title: 'Run Raw Snapshot', data: runState })}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[11px] font-mono text-white/50 hover:text-white/90 hover:bg-white/5 border border-white/[0.06] transition-colors flex-shrink-0"
-          title="Inspect raw run JSON"
-        >
-          <Code size={12} />
-          <span>Raw Data</span>
-        </button>
+          <button
+            onClick={() => setInspectData({ title: 'Run Raw Snapshot', data: runState })}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[11px] font-mono text-white/50 hover:text-white/90 hover:bg-white/5 border border-white/[0.06] transition-colors flex-shrink-0"
+            title="Inspect raw run JSON"
+          >
+            <Code size={12} />
+            <span>Raw Data</span>
+          </button>
+        </div>
       </div>
 
       {/* Stats Cards */}

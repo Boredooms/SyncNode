@@ -132,10 +132,11 @@ For a multi-document + email workflow, the CORRECT plan is:
    inputs: {"keys": "{Ctrl}s"}
    postconditions: [{"assertion_type": "file_saved", "target": ""}]
 8. browser.navigate (browser)             -> page_loaded
-   CRITICAL: embed ALL email fields in the URL:
+   CRITICAL: embed ALL email fields in the URL using Gmail compose format:
    url = "https://mail.google.com/mail/u/0/?view=cm&fs=1&to=<RECIPIENT>&su=<SUBJECT>&body=<BODY>"
-   URL-encode spaces as +. Example:
-   "https://mail.google.com/mail/u/0/?view=cm&fs=1&to=demo@syncnode.ai&su=Q4+Package&body=Hi+Team"
+   URL-encode spaces as +, @ as %40 etc. Example:
+   "https://mail.google.com/mail/u/0/?view=cm&fs=1&to=demo%40syncnode.ai&su=Battery+Tech+Package&body=Hi+Team%2C+Please+find+attached"
+   The orchestrator ALSO fills the fields directly after navigation — but always embed them in the URL too.
    postconditions: [{"assertion_type": "page_loaded", "target": "mail.google.com"}]
 9. browser.attach_file (browser)          -> attachment_present
    inputs: {}  ← LEAVE EMPTY — orchestrator auto-attaches ALL run artifacts
