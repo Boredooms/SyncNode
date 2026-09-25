@@ -1432,7 +1432,7 @@ class SyncNodeOrchestrator:
             if not artifact_keys:
                 artifact_keys = ["doc_path", "word_path", "excel_path", "powerpoint_path"]
 
-            # Priority 1: same-run artifact dict
+            # Priority 1: same-run artifact dict (already captured)
             for ak in artifact_keys:
                 art_path = self._artifacts.get(ak)
                 if art_path:
@@ -1442,10 +1442,14 @@ class SyncNodeOrchestrator:
                                 ak, step.step_key, inputs["args"][0])
                     break
 
-            # Priority 2: workspace scan when artifact not captured yet (parallel wave race)
+            # Priority 2: workspace scan WITH wait — poll up to 20s for the file
+            # to appear. Handles the parallel-wave race where create_docx and
+            # launch_word are dispatched simultaneously and create_docx hasn't
+            # written the file yet when _resolve_step_inputs first fires.
             if not inputs.get("args") and self._artifacts_reg is not None:
                 try:
                     import glob as _glob
+                    import asyncio as _aio
                     _ext_map = {
                         "word": "*.docx", "winword": "*.docx", "winword.exe": "*.docx",
                         "excel": "*.xlsx", "excel.exe": "*.xlsx",
@@ -1453,14 +1457,21 @@ class SyncNodeOrchestrator:
                     }
                     pattern = _ext_map.get(exe_key, "*.docx")
                     run_dir = str(self._artifacts_reg.run_dir)
-                    matches = sorted(
-                        _glob.glob(f"{run_dir}/**/{pattern}", recursive=True),
-                        key=lambda x: Path(x).stat().st_mtime, reverse=True,
-                    )
-                    if matches:
-                        inputs["args"] = [str(Path(matches[0]).resolve())]
-                        logger.info("[FLOW] workspace-scan injected launch arg into %s → %s",
-                                    step.step_key, inputs["args"][0])
+
+                    # Poll until file exists (max 20s in 0.5s steps)
+                    for _wait_attempt in range(40):
+                        matches = sorted(
+                            _glob.glob(f"{run_dir}/**/{pattern}", recursive=True),
+                            key=lambda x: Path(x).stat().st_mtime, reverse=True,
+                        )
+                        if matches:
+                            inputs["args"] = [str(Path(matches[0]).resolve())]
+                            logger.info("[FLOW] workspace-scan (attempt %d) injected launch arg %s → %s",
+                                        _wait_attempt + 1, step.step_key, inputs["args"][0])
+                            break
+                        await _aio.sleep(0.5)
+                    else:
+                        logger.warning("[FLOW] launch_app workspace scan: file not found after 20s for %s", step.step_key)
                 except Exception as _scan_exc:
                     logger.debug("[FLOW] launch_app workspace scan failed: %s", _scan_exc)
 
