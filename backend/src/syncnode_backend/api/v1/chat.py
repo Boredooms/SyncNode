@@ -598,42 +598,53 @@ async def get_run_context_for_session(session_id: str, run_id: str) -> dict:
 
 
 def _parse_tool_code_from_text(text: str) -> list[dict]:
-    """Parse <tool_code>funcname(args)</tool_code> or function-call-style text
-    that Gemma sometimes emits instead of proper function call events.
+    """Parse <tool_code>funcname(args)</tool_code> blocks that Gemma emits
+    as text instead of proper Ollama function call events.
 
     Returns a list of fake tool_call dicts matching the Ollama format.
     """
     import re, json as _json
     results = []
 
-    # Match <tool_code>tool_name(arg1=val, ...)</tool_code>
-    # Also match excel_write_range(path="...", start_cell="...", rows=[...])
-    pattern = re.compile(
-        r'<tool_code>\s*(\w+)\s*\((.*?)\)\s*</tool_code>',
-        re.DOTALL
-    )
-    for m in pattern.finditer(text):
-        fn_name = m.group(1).strip()
-        args_raw = m.group(2).strip()
+    # Match the FULL content between <tool_code> and </tool_code>
+    # Use </tool_code> as the delimiter — NOT the closing ')' which fails
+    # on nested structures like rows=[[...], [...]]
+    block_pattern = re.compile(r'<tool_code>(.*?)</tool_code>', re.DOTALL)
+    # Split function name from args: first word before '('
+    fn_pattern = re.compile(r'^(\w+)\s*\((.*)\)\s*$', re.DOTALL)
 
-        # Try to parse kwargs: key="value" or key=['...'] or key={...}
+    for block_m in block_pattern.finditer(text):
+        block = block_m.group(1).strip()
+        fn_m = fn_pattern.match(block)
+        if not fn_m:
+            continue
+
+        fn_name = fn_m.group(1).strip()
+        args_raw = fn_m.group(2).strip()
+
         args_dict: dict = {}
+
+        # Strategy 1: try ast.literal_eval on the full args as a dict
         try:
-            # Wrap in braces and eval-safe parse via json
-            # Convert key=value to "key": value JSON-style
-            json_str = re.sub(
-                r'(\w+)\s*=\s*',
-                r'"\1": ',
-                args_raw
-            )
-            # Replace single quotes with double for JSON
-            json_str = json_str.replace("'", '"')
-            args_dict = _json.loads("{" + json_str + "}")
+            import ast as _ast
+            tree = _ast.parse(f"_f({args_raw})", mode='eval')
+            call = tree.body
+            d = {}
+            for kw in call.keywords:
+                d[kw.arg] = _ast.literal_eval(kw.value)
+            if d:
+                args_dict = d
         except Exception:
-            # Fallback: extract string args manually
-            kv = re.findall(r'(\w+)\s*=\s*"([^"]*)"', args_raw)
-            for k, v in kv:
-                args_dict[k] = v
+            pass
+
+        # Strategy 2: key=value extraction for simple string/number args
+        if not args_dict:
+            for m2 in re.finditer(r'(\w+)\s*=\s*("(?:[^"\\]|\\.)*"|\d+\.?\d*)', args_raw):
+                k, v = m2.group(1), m2.group(2)
+                try:
+                    args_dict[k] = _json.loads(v)
+                except Exception:
+                    args_dict[k] = v.strip('"')
 
         if fn_name and args_dict:
             results.append({
