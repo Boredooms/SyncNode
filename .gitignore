@@ -32,6 +32,8 @@ ENV/
 
 # ─── Database & runtime data (user-specific, generated on first run) ──────────
 data/
+# …except the website's content data — that is source code, required for the Vercel build
+!website/src/data/
 *.db
 *.sqlite
 *.sqlite3
