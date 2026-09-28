@@ -78,9 +78,14 @@ ehthumbs.db
 # ─── Kiro / internal tooling ──────────────────────────────────────────────────
 .graphify/
 .kilocode/
+.freebuff/
 
 # ─── Large media (mesh gradient videos — too big for git) ─────────────────────
 *.mp4
+# Website video deliverables ARE required for deploy (Vercel builds from git)
+!website/public/videos/*.mp4
+# Video pipeline scratch space
+website/frame_analysis/_tmp/
 *.mov
 *.avi
 Untitled blend*.png

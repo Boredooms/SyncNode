@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <radialGradient id="fog" cx="50%" cy="38%" r="75%">
+      <stop offset="0%" stop-color="#161616"/>
+      <stop offset="55%" stop-color="#0B0B0B"/>
+      <stop offset="100%" stop-color="#060606"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#fog)"/>
+  <g stroke="#1B1B1B" stroke-width="1">
+    <line x1="600" y1="0" x2="600" y2="630"/>
+    <line x1="0" y1="315" x2="1200" y2="315"/>
+    <line x1="300" y1="0" x2="300" y2="630"/>
+    <line x1="900" y1="0" x2="900" y2="630"/>
+  </g>
+  <g font-family="Inter, 'Segoe UI', sans-serif">
+    <text x="600" y="245" text-anchor="middle" font-size="64" font-weight="600" letter-spacing="26" fill="#F2F2F2">SYNCNODE</text>
+    <text x="600" y="360" text-anchor="middle" font-size="34" font-weight="300" letter-spacing="6" fill="#9A9A9A">THINK LOCALLY.</text>
+    <text x="600" y="415" text-anchor="middle" font-size="34" font-weight="300" letter-spacing="6" fill="#9A9A9A">ACT INTELLIGENTLY.</text>
+    <text x="600" y="540" text-anchor="middle" font-size="15" letter-spacing="4" fill="#565656">SOVEREIGN LOCAL AI WORKBENCH</text>
+  </g>
+  <circle cx="600" cy="112" r="10" fill="none" stroke="#EDEDED" stroke-width="1.6"/>
+</svg>

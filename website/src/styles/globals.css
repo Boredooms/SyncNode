@@ -1,0 +1,91 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  scroll-behavior: auto;
+}
+
+body {
+  @apply bg-ink-950 text-fg-body font-sans antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: #2e2e2e;
+  color: #f2f2f2;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: #080808;
+}
+::-webkit-scrollbar-thumb {
+  background: #232323;
+  border-radius: 8px;
+  border: 2px solid #080808;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #333333;
+}
+
+:focus-visible {
+  outline: 1px solid #8a8a8a;
+  outline-offset: 3px;
+}
+
+@layer components {
+  .container-page {
+    @apply mx-auto w-full max-w-[1200px] px-6 md:px-10;
+  }
+
+  .eyebrow {
+    @apply font-mono text-micro uppercase tracking-wider2 text-fg-dim;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-[4px] font-medium transition-all duration-200 select-none;
+  }
+
+  .btn-primary {
+    @apply btn bg-fg-primary text-ink-950 hover:bg-white;
+  }
+
+  .btn-secondary {
+    @apply btn border border-line bg-transparent text-fg-primary hover:border-fg-dim hover:bg-ink-800;
+  }
+
+  .btn-ghost {
+    @apply btn text-fg-mute hover:text-fg-primary;
+  }
+
+  .btn-lg {
+    @apply px-7 py-3.5 text-sm tracking-wide;
+  }
+
+  .btn-md {
+    @apply px-5 py-2.5 text-[13px];
+  }
+
+  .surface {
+    @apply rounded-lg border border-line bg-ink-800;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
