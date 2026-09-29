@@ -290,12 +290,20 @@ async def tool_document_inspect_docx(path: str) -> dict[str, Any]:
 
 
 async def tool_document_read_docx(path: str) -> dict[str, Any]:
-    """Read the full text content of a DOCX file."""
+    """Read the full text content of a DOCX file. Accepts bare filename — auto-resolves from workspace/uploads."""
     from docx import Document as DocxDocument
 
-    p = _safe_path(path)
+    p = Path(path).expanduser().resolve()
     if not p.exists():
-        return {"exists": False, "text": ""}
+        # Try workspace-aware resolution first
+        try:
+            p = _safe_path(path)
+        except Exception:
+            pass
+    if not p.exists():
+        p = _resolve_any_file(path)
+    if not p.exists():
+        return {"exists": False, "text": "", "error": f"File not found: {path}"}
 
     doc = DocxDocument(str(p))
     full_text = "\n".join(para.text for para in doc.paragraphs if para.text.strip())
@@ -307,6 +315,64 @@ async def tool_document_read_docx(path: str) -> dict[str, Any]:
     }
 
 
+def _resolve_any_file(path: str) -> Path:
+    """Resolve a bare filename or partial path to an absolute path.
+
+    Search order:
+      1. workspace/uploads/  (Chat file attachments land here)
+      2. workspace/          (recursive glob)
+      3. Desktop
+      4. Downloads
+      5. Documents
+      6. Home directory
+
+    Returns the most recently modified match, or the original Path if nothing found.
+    """
+    from syncnode_backend.config.settings import settings
+    import glob as _glob
+    import os as _os
+
+    p = Path(path)
+    # Already absolute and close to existing — return as-is
+    if p.is_absolute():
+        return p
+
+    name = p.name  # bare filename like "ApplicationForm (2).pdf"
+    workspace = settings.syncnode_workspace_root
+
+    # Priority search locations
+    search_dirs = [
+        workspace / "uploads",
+        workspace,
+        Path.home() / "Desktop",
+        Path.home() / "Downloads",
+        Path.home() / "Documents",
+        Path.home(),
+    ]
+
+    candidates = []
+    for d in search_dirs:
+        if d.exists():
+            # Direct match
+            exact = d / name
+            if exact.exists():
+                candidates.append(exact)
+                break  # exact match in uploads is best — stop here
+            # Recursive glob for workspace
+            if d == workspace:
+                matches = list(d.rglob(name))
+                candidates.extend(matches)
+
+    if candidates:
+        # Sort by mtime descending — newest upload wins
+        candidates.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+        logger.info("[DOC] resolved '%s' → '%s'", path, candidates[0])
+        return candidates[0]
+
+    # Nothing found — return original path (will be reported as missing)
+    return Path(path).expanduser().resolve()
+
+
 async def tool_document_read_pdf(path: str, max_chars: int = 50000) -> dict[str, Any]:
     """
     Read and extract text from a PDF file.
@@ -315,14 +381,18 @@ async def tool_document_read_pdf(path: str, max_chars: int = 50000) -> dict[str,
     Falls back to page-level image OCR via Tesseract if text extraction yields nothing
     (handles scanned/image-only PDFs).
 
-    Accepts any absolute path — not workspace-restricted so Chat can read
-    PDFs from Downloads, Desktop, or anywhere the user specifies.
+    Accepts absolute path OR bare filename — if a bare filename is given,
+    automatically searches workspace/uploads, workspace, Desktop, Downloads.
     """
     import fitz  # PyMuPDF — always available
     p = Path(path).expanduser().resolve()
 
+    # Auto-resolve bare filename / relative path → search common locations
     if not p.exists():
-        return {"exists": False, "text": "", "path": str(p), "error": "File not found"}
+        p = _resolve_any_file(path)
+
+    if not p.exists():
+        return {"exists": False, "text": "", "path": str(p), "error": f"File not found: {path}"}
     if p.suffix.lower() != ".pdf":
         return {"exists": False, "text": "", "path": str(p), "error": "Not a PDF file"}
 
@@ -399,12 +469,14 @@ async def tool_document_read_image(path: str) -> dict[str, Any]:
     Extract text from an image file (.png, .jpg, .jpeg, .webp, .bmp, .tiff)
     using Tesseract OCR (if installed) or PyMuPDF pixmap analysis.
 
-    Accepts any absolute path — useful for screenshots, scanned documents,
-    form photos, and any image the user drops into Chat.
+    Accepts absolute path OR bare filename — auto-searches workspace/uploads,
+    workspace, Desktop, Downloads if a bare filename is given.
     """
     p = Path(path).expanduser().resolve()
     if not p.exists():
-        return {"exists": False, "text": "", "error": "File not found"}
+        p = _resolve_any_file(path)
+    if not p.exists():
+        return {"exists": False, "text": "", "error": f"File not found: {path}"}
 
     supported = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif", ".gif"}
     if p.suffix.lower() not in supported:
