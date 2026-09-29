@@ -194,7 +194,28 @@ def extract_text(path: Path, max_chars: int = 200_000) -> tuple[str, str, Option
             "Install with: pip install pymupdf  or  pip install pdfplumber"
         )
 
-    raise ValueError(f"Unsupported file type: {ext!r}. Supported: .docx .xlsx .pptx .pdf .txt .md .csv .json and other text files.")
+    # ── Images (OCR) ─────────────────────────────────────────────────────
+    if ext in (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif"):
+        try:
+            import pytesseract
+            from PIL import Image as _PILImage
+            img = _PILImage.open(str(path))
+            text = pytesseract.image_to_string(img, lang="eng")
+            return text[:max_chars], f"image/{ext.lstrip('.')}", None
+        except ImportError:
+            pass
+        # Fallback: PyMuPDF can open images too
+        try:
+            import fitz
+            doc = fitz.open(str(path))
+            text = "".join(page.get_text("text") for page in doc)
+            doc.close()
+            return text[:max_chars], f"image/{ext.lstrip('.')}", None
+        except Exception:
+            pass
+        return f"[Image file: {path.name} — OCR not available. Install pytesseract for text extraction.]", f"image/{ext.lstrip('.')}", None
+
+    raise ValueError(f"Unsupported file type: {ext!r}. Supported: .docx .xlsx .pptx .pdf .txt .md .csv .json and image files (.png .jpg .jpeg).")
 
 
 def chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> list[str]:

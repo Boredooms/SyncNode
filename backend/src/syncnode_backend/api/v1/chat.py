@@ -249,6 +249,28 @@ When the user asks you to DO something, use the tools to actually do it.
 After every tool call, summarise what happened clearly.
 Be direct, powerful, and action-oriented.
 Think locally. Act intelligently. You have the full machine.
+
+READING DOCUMENTS (PDF, Images, Word, Excel):
+- PDF files:     document.read_pdf(path="<absolute_path>")      — text + scanned PDFs
+- Images/OCR:    document.read_image(path="<absolute_path>")    — screenshots, scanned forms
+- Word:          document.read_docx(path="<absolute_path>")     — Word documents
+- Excel:         excel.read_range(path="<path>", cell_range="A1:Z100")
+
+WHEN USER UPLOADS/ATTACHES A FILE:
+  The file content is already injected into your context above as [ATTACHED DOCUMENT].
+  Read it from there — no tool call needed for the uploaded file.
+  If you need to READ a file that is already saved on disk by path:
+    1. Find it:  system.fs_search(query="name.pdf", search_path="C:\\Users")
+    2. Read it:  document.read_pdf(path="<found_path>")
+    3. Answer from the extracted text.
+
+CODE EXECUTION:
+  system.run_code(code="...", language="python")      — Python scripts, data analysis
+  system.run_code(code="...", language="powershell")  — PowerShell scripts
+  system.run_code(code="...", language="javascript")  — Node.js scripts
+  system.terminal(command="pip list")                 — direct terminal, any command
+  system.terminal(command="python script.py")         — run scripts
+  system.terminal(command="ipconfig /all")            — system info
 """
 
 
@@ -260,6 +282,7 @@ def _get_chat_tools() -> list[dict]:
     from syncnode_backend.tools.registry import tool_registry
     allowed = {
         "document.create_docx", "document.inspect_docx", "document.read_docx",
+        "document.read_pdf", "document.read_image",
         "excel.create", "excel.write_cell", "excel.write_range", "excel.read_cell",
         "excel.read_range", "excel.inspect",
         "powerpoint.create", "powerpoint.add_slide", "powerpoint.inspect",
@@ -272,6 +295,7 @@ def _get_chat_tools() -> list[dict]:
         "system.fs_read", "system.fs_list", "system.fs_search",
         "system.fs_write", "system.fs_delete",
         "system.shell",
+        "system.run_code", "system.terminal",
         "system.process_list", "system.process_kill",
         "system.clipboard_get", "system.clipboard_set",
         "system.env_get", "system.registry_get",

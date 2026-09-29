@@ -307,6 +307,153 @@ async def tool_document_read_docx(path: str) -> dict[str, Any]:
     }
 
 
+async def tool_document_read_pdf(path: str, max_chars: int = 50000) -> dict[str, Any]:
+    """
+    Read and extract text from a PDF file.
+
+    Uses PyMuPDF (fitz) for high-quality text extraction.
+    Falls back to page-level image OCR via Tesseract if text extraction yields nothing
+    (handles scanned/image-only PDFs).
+
+    Accepts any absolute path — not workspace-restricted so Chat can read
+    PDFs from Downloads, Desktop, or anywhere the user specifies.
+    """
+    import fitz  # PyMuPDF — always available
+    p = Path(path).expanduser().resolve()
+
+    if not p.exists():
+        return {"exists": False, "text": "", "path": str(p), "error": "File not found"}
+    if p.suffix.lower() != ".pdf":
+        return {"exists": False, "text": "", "path": str(p), "error": "Not a PDF file"}
+
+    try:
+        doc = fitz.open(str(p))
+        pages_text = []
+        for page in doc:
+            pages_text.append(page.get_text("text"))
+        doc.close()
+
+        full_text = "\n".join(pages_text).strip()
+        page_count = len(pages_text)
+
+        # If text extraction gave very little — probably a scanned PDF, try OCR
+        if len(full_text) < 100 and page_count > 0:
+            full_text = await _ocr_pdf_pages(str(p), max_chars)
+            method = "ocr"
+        else:
+            method = "text_extraction"
+
+        full_text = full_text[:max_chars]
+        return {
+            "exists": True,
+            "path": str(p),
+            "text": full_text,
+            "char_count": len(full_text),
+            "page_count": page_count,
+            "word_count": len(full_text.split()),
+            "method": method,
+        }
+    except Exception as exc:
+        return {"exists": True, "path": str(p), "text": "", "error": str(exc)}
+
+
+async def _ocr_pdf_pages(pdf_path: str, max_chars: int = 50000) -> str:
+    """OCR each page of a PDF using Tesseract (if available) or PyMuPDF pixmap text."""
+    try:
+        import pytesseract
+        from PIL import Image
+        import io, fitz
+        doc = fitz.open(pdf_path)
+        texts = []
+        for page in doc:
+            mat = fitz.Matrix(2, 2)  # 2x zoom for better OCR accuracy
+            pix = page.get_pixmap(matrix=mat)
+            img_bytes = pix.tobytes("png")
+            img = Image.open(io.BytesIO(img_bytes))
+            text = pytesseract.image_to_string(img, lang="eng")
+            texts.append(text)
+        doc.close()
+        return "\n".join(texts)[:max_chars]
+    except ImportError:
+        pass
+
+    # Fallback: PyMuPDF's raw text even on image-heavy PDFs
+    try:
+        import fitz
+        doc = fitz.open(pdf_path)
+        texts = [page.get_text("rawdict").get("blocks", []) for page in doc]
+        doc.close()
+        flat = []
+        for page_blocks in texts:
+            for block in page_blocks:
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        flat.append(span.get("text", ""))
+        return " ".join(flat)[:max_chars]
+    except Exception:
+        return ""
+
+
+async def tool_document_read_image(path: str) -> dict[str, Any]:
+    """
+    Extract text from an image file (.png, .jpg, .jpeg, .webp, .bmp, .tiff)
+    using Tesseract OCR (if installed) or PyMuPDF pixmap analysis.
+
+    Accepts any absolute path — useful for screenshots, scanned documents,
+    form photos, and any image the user drops into Chat.
+    """
+    p = Path(path).expanduser().resolve()
+    if not p.exists():
+        return {"exists": False, "text": "", "error": "File not found"}
+
+    supported = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif", ".gif"}
+    if p.suffix.lower() not in supported:
+        return {"exists": False, "text": "", "error": f"Unsupported image type: {p.suffix}"}
+
+    try:
+        import pytesseract
+        from PIL import Image
+        img = Image.open(str(p))
+        text = pytesseract.image_to_string(img, lang="eng")
+        return {
+            "exists": True,
+            "path": str(p),
+            "text": text.strip(),
+            "char_count": len(text.strip()),
+            "method": "tesseract_ocr",
+        }
+    except ImportError:
+        pass
+
+    # Fallback: use PyMuPDF to open image and extract any embedded text
+    try:
+        import fitz
+        doc = fitz.open(str(p))
+        text = "".join(page.get_text("text") for page in doc)
+        doc.close()
+        if text.strip():
+            return {"exists": True, "path": str(p), "text": text.strip(),
+                    "char_count": len(text.strip()), "method": "pymupdf"}
+    except Exception:
+        pass
+
+    # Last resort: describe the file without OCR
+    stat = p.stat()
+    return {
+        "exists": True,
+        "path": str(p),
+        "text": "",
+        "char_count": 0,
+        "size_bytes": stat.st_size,
+        "method": "no_ocr",
+        "note": (
+            "Could not extract text — Tesseract OCR is not installed. "
+            "Install it with: pip install pytesseract && "
+            "download Tesseract from https://github.com/UB-Mannheim/tesseract/wiki"
+        ),
+    }
+
+
 def register_document_tools(registry) -> None:
     """Register all document and filesystem tools in the given registry."""
     from syncnode_backend.tools.registry import ToolDefinition
@@ -414,6 +561,49 @@ def register_document_tools(registry) -> None:
             handler=tool_document_read_docx,
             arg_aliases={"filename": "path", "file_name": "path", "file": "path",
                          "document_name": "path", "workspace": "", "directory": ""},
+        ),
+        ToolDefinition(
+            key="document.read_pdf",
+            name="Read PDF",
+            version=1,
+            description=(
+                "Extract text from any PDF file — text-based or scanned. "
+                "Uses PyMuPDF for text PDFs and Tesseract OCR for image/scanned PDFs. "
+                "Pass the full absolute path. Works on any PDF on the machine — "
+                "Downloads folder, Desktop, workspace, anywhere."
+            ),
+            input_schema={"path": "str", "max_chars": "int?"},
+            output_schema={"text": "str", "page_count": "int", "char_count": "int", "method": "str"},
+            capabilities=["document_inspection"],
+            risk_class="low",
+            side_effect_type="READ_ONLY",
+            idempotency="idempotent",
+            verification_strategy="never",
+            handler=tool_document_read_pdf,
+            arg_aliases={"filename": "path", "file": "path", "pdf": "path",
+                         "file_path": "path", "document": "path"},
+            drop_decorative_args=True,
+        ),
+        ToolDefinition(
+            key="document.read_image",
+            name="Read Image (OCR)",
+            version=1,
+            description=(
+                "Extract text from an image file (.png .jpg .jpeg .webp .bmp .tiff) using OCR. "
+                "Useful for screenshots, scanned forms, photos of documents. "
+                "Pass the full absolute path."
+            ),
+            input_schema={"path": "str"},
+            output_schema={"text": "str", "char_count": "int", "method": "str"},
+            capabilities=["document_inspection"],
+            risk_class="low",
+            side_effect_type="READ_ONLY",
+            idempotency="idempotent",
+            verification_strategy="never",
+            handler=tool_document_read_image,
+            arg_aliases={"filename": "path", "file": "path", "image": "path",
+                         "screenshot": "path", "file_path": "path"},
+            drop_decorative_args=True,
         ),
         ToolDefinition(
             key="writer.generate_paragraph",

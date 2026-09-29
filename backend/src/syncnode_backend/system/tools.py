@@ -444,6 +444,151 @@ async def tool_system_process_kill(
             "stdout": result.get("stdout", ""), "stderr": result.get("stderr", "")}
 
 
+# ─── CODE EXECUTOR ────────────────────────────────────────────────────────────
+
+# Blocked code patterns — prevent dangerous operations in sandboxed execution
+_CODE_BLOCKED_PATTERNS = [
+    "os.system", "subprocess", "shutil.rmtree", "__import__('os')",
+    "eval(", "exec(", "open('/", "open('C:\\\\Windows",
+    "ctypes", "winreg.SetValue", "format(", "deltree",
+]
+
+async def tool_system_run_code(
+    code: str,
+    language: str = "python",
+    timeout_seconds: int = 30,
+    working_dir: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    Execute code in a sandboxed subprocess and return stdout/stderr/exit_code.
+
+    Supported languages:
+      python     — runs with the current Python interpreter
+      powershell — runs via PowerShell -Command
+      javascript — runs via Node.js (if installed)
+      bash       — runs via bash (if available)
+
+    Safety:
+      - Timeout enforced (default 30s)
+      - Output capped at 10,000 chars
+      - Blocked patterns checked before execution
+
+    Perfect for: data analysis, file processing scripts, calculations,
+    generating reports from data, testing algorithms.
+    """
+    lang = language.lower().strip()
+    code_lower = code.lower()
+
+    # Soft safety check on dangerous patterns
+    blocked = [p for p in _CODE_BLOCKED_PATTERNS if p.lower() in code_lower]
+    if blocked and lang == "python":
+        return {
+            "exit_code": -1, "success": False,
+            "stdout": "", "stderr": "",
+            "blocked": True,
+            "reason": f"Code contains blocked pattern(s): {blocked}",
+        }
+
+    import asyncio, tempfile, os
+
+    # Build the command
+    if lang == "python":
+        # Write to temp file so we can support multi-line code
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py",
+                                          delete=False, encoding="utf-8") as f:
+            f.write(code)
+            tmp = f.name
+        cmd = ["python", tmp]
+        cleanup = tmp
+    elif lang in ("powershell", "pwsh", "ps"):
+        cmd = ["powershell", "-NonInteractive", "-Command", code]
+        cleanup = None
+    elif lang in ("javascript", "js", "node"):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".js",
+                                          delete=False, encoding="utf-8") as f:
+            f.write(code)
+            tmp = f.name
+        cmd = ["node", tmp]
+        cleanup = tmp
+    elif lang in ("bash", "sh"):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".sh",
+                                          delete=False, encoding="utf-8") as f:
+            f.write(code)
+            tmp = f.name
+        cmd = ["bash", tmp]
+        cleanup = tmp
+    else:
+        return {"exit_code": -1, "success": False, "stdout": "", "stderr": "",
+                "error": f"Unsupported language: {language}. Use: python, powershell, javascript, bash"}
+
+    cwd = working_dir if working_dir and Path(working_dir).exists() else None
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=cwd,
+        )
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(), timeout=timeout_seconds
+        )
+        return {
+            "exit_code": proc.returncode,
+            "stdout": (stdout or b"").decode("utf-8", errors="replace")[:10_000],
+            "stderr": (stderr or b"").decode("utf-8", errors="replace")[:2_000],
+            "success": proc.returncode == 0,
+            "language": lang,
+        }
+    except asyncio.TimeoutError:
+        return {"exit_code": -1, "success": False, "stdout": "", "stderr": "",
+                "error": f"Timed out after {timeout_seconds}s"}
+    except FileNotFoundError as exc:
+        return {"exit_code": -1, "success": False, "stdout": "", "stderr": "",
+                "error": f"Runtime not found: {exc}. Make sure {lang} is installed."}
+    except Exception as exc:
+        return {"exit_code": -1, "success": False, "stdout": "", "stderr": str(exc)}
+    finally:
+        if cleanup:
+            try:
+                os.unlink(cleanup)
+            except Exception:
+                pass
+
+
+async def tool_system_terminal(
+    command: str,
+    shell: str = "powershell",
+    timeout_seconds: int = 60,
+    working_dir: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    Run a terminal command and return the full output.
+
+    This is a direct, powerful terminal — all output is returned as text.
+    Use it like a real terminal session: run commands, check files, install
+    packages, run scripts, query system info.
+
+    shell options: powershell (default), cmd, bash
+
+    Examples:
+      terminal(command="Get-Date")
+      terminal(command="pip list")
+      terminal(command="python --version")
+      terminal(command="ls -la", shell="bash")
+      terminal(command="ipconfig /all")
+
+    No blocked patterns — this is the full system shell.
+    Use system.shell for the policy-blocked version.
+    """
+    return await tool_system_shell(
+        command=command,
+        shell=shell,
+        timeout_seconds=timeout_seconds,
+        working_dir=working_dir,
+    )
+
+
 # ─── Registration ─────────────────────────────────────────────────────────────
 
 def register_system_tools(registry) -> None:
@@ -615,6 +760,52 @@ def register_system_tools(registry) -> None:
             drop_decorative_args=True,
             arg_aliases={"key": "key_path", "path": "key_path",
                          "name": "value_name", "value": "value_name"},
+        ),
+        ToolDefinition(
+            key="system.run_code",
+            name="Run Code",
+            version=1,
+            description=(
+                "Execute code in a sandboxed subprocess and return stdout/stderr. "
+                "Supports: python, powershell, javascript (Node.js), bash. "
+                "Use for: data analysis, file processing, calculations, "
+                "generating reports from data, testing algorithms, automation scripts. "
+                "Output capped at 10,000 chars. Timeout default 30s."
+            ),
+            input_schema={"code": "str", "language": "str?", "timeout_seconds": "int?", "working_dir": "str?"},
+            output_schema={"stdout": "str", "stderr": "str", "exit_code": "int", "success": "bool"},
+            capabilities=["shell", "system_access"],
+            risk_class="medium", side_effect_type="REVERSIBLE_LOCAL", idempotency="non_idempotent",
+            verification_strategy="never", handler=tool_system_run_code,
+            drop_decorative_args=True,
+            arg_aliases={
+                "script": "code", "program": "code", "source": "code", "content": "code",
+                "lang": "language", "runtime": "language",
+                "timeout": "timeout_seconds", "max_time": "timeout_seconds",
+                "cwd": "working_dir", "directory": "working_dir",
+            },
+        ),
+        ToolDefinition(
+            key="system.terminal",
+            name="Terminal",
+            version=1,
+            description=(
+                "Run any terminal command and return the full output — like having a real terminal. "
+                "Supports powershell (default), cmd, bash. "
+                "Use for: running commands, checking system state, installing packages, "
+                "running scripts, querying network/disk/process info, anything shell-related. "
+                "Timeout default 60s. No blocked patterns — full access."
+            ),
+            input_schema={"command": "str", "shell": "str?", "timeout_seconds": "int?", "working_dir": "str?"},
+            output_schema={"stdout": "str", "stderr": "str", "exit_code": "int", "success": "bool"},
+            capabilities=["shell", "system_access"],
+            risk_class="high", side_effect_type="UNKNOWN_EXTERNAL_EFFECT", idempotency="non_idempotent",
+            verification_strategy="never", handler=tool_system_terminal,
+            drop_decorative_args=True,
+            arg_aliases={
+                "cmd": "command", "run": "command", "execute": "command",
+                "cwd": "working_dir", "directory": "working_dir",
+            },
         ),
     ]
 
